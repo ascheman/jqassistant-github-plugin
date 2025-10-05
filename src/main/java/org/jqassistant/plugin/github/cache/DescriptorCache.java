@@ -25,10 +25,6 @@ class DescriptorCache {
     @Getter
     private GitHubRepository repository;
 
-    @Setter
-    @Getter
-    private GitHubBranch branch;
-
     private final TreeMap<String, GitHubCommit> commits = new TreeMap<>();
     private final TreeMap<Integer, GitHubIssue> issues = new TreeMap<>();
     private final TreeMap<String, GitHubUser> users = new TreeMap<>();

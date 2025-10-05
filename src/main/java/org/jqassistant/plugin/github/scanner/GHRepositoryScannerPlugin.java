@@ -11,16 +11,6 @@ import java.io.IOException;
 
 public class GHRepositoryScannerPlugin extends AbstractScannerPlugin<GHRepository, GitHubRepository> {
 
-    private static final String PROPERTY_NAME_BRANCH = "github.repository.branch";
-
-    private String branch;
-
-
-    @Override
-    protected void configure() {
-        branch = getStringProperty(PROPERTY_NAME_BRANCH, "main");
-    }
-
     @Override
     public boolean accepts(GHRepository repository, String path, Scope scope) {
         return true;
@@ -31,7 +21,7 @@ public class GHRepositoryScannerPlugin extends AbstractScannerPlugin<GHRepositor
         CacheEndpoint cacheEndpoint = new CacheEndpoint(getScannerContext().getStore());
 
         GraphBuilder graphBuilder = new GraphBuilder(cacheEndpoint);
-        return graphBuilder.scanRepository(ghRepository, branch);
+        return graphBuilder.scanRepository(ghRepository);
     }
 
 }

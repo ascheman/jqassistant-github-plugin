@@ -36,20 +36,16 @@ import java.util.List;
 class GraphBuilder {
 
     private final CacheEndpoint cacheEndpoint;
-    GitHubRepository scanRepository(GHRepository ghRepository, String branch) throws IOException {
+    GitHubRepository scanRepository(GHRepository ghRepository) throws IOException {
 
-        //log.info("Scanning repository {} in organization {}", repositoryName, repositoryOwner);
+        log.info("Scanning repository '{}'", ghRepository.getFullName());
 
         GitHub gitHub = GitHub.connect();
-        log.info("Rate limit for user: {}", gitHub.getRateLimit());
+        log.info("Rate limit for user: '{}')", gitHub.getRateLimit());
 
         GitHubRepository gitHubRepository = cacheEndpoint.findOrCreateGitHubRepository(ghRepository);
 
-        // branch dependent
-        importBranch(ghRepository, gitHubRepository, branch);
         importPullRequests(ghRepository, gitHubRepository); // first import PRs, because they'll also be returned when fetching issues
-
-        // branch independent
         importMilestones(ghRepository, gitHubRepository);
         importIssues(ghRepository, gitHubRepository);
         importTags(ghRepository, gitHubRepository);
@@ -58,16 +54,6 @@ class GraphBuilder {
         log.info("Repository scan complete");
         log.info("Remaining rate limit for user: {}", gitHub.getRateLimit());
         return gitHubRepository;
-    }
-
-    private void importBranch(GHRepository repository, GitHubRepository gitHubRepository, String branch) {
-        try {
-            GHBranch ghBranch = repository.getBranch(branch);
-            List<GHCommit> ghCommits = repository.queryCommits().from(branch).list().toList();
-            gitHubRepository.setBranch(cacheEndpoint.findOrCreateGitHubBranch(ghBranch, ghCommits));
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        }
     }
 
     private void importPullRequests(GHRepository repository, GitHubRepository gitHubRepository) {
