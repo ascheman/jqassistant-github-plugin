@@ -3,7 +3,13 @@ package org.jqassistant.plugin.github.cache;
 
 import lombok.Getter;
 import lombok.Setter;
-import org.jqassistant.plugin.github.model.*;
+import org.jqassistant.plugin.github.model.GitHubIssue;
+import org.jqassistant.plugin.github.model.GitHubLabel;
+import org.jqassistant.plugin.github.model.GitHubMilestone;
+import org.jqassistant.plugin.github.model.GitHubPullRequest;
+import org.jqassistant.plugin.github.model.GitHubRelease;
+import org.jqassistant.plugin.github.model.GitHubRepository;
+import org.jqassistant.plugin.github.model.GitHubUser;
 
 import java.util.Optional;
 import java.util.TreeMap;

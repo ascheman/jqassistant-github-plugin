@@ -3,8 +3,8 @@ package org.jqassistant.plugin.github.scanner;
 import com.buschmais.jqassistant.core.scanner.api.Scanner;
 import com.buschmais.jqassistant.core.scanner.api.Scope;
 import com.buschmais.jqassistant.plugin.common.api.scanner.AbstractScannerPlugin;
-import org.jqassistant.plugin.github.model.GitHubRepository;
 import org.jqassistant.plugin.github.cache.CacheEndpoint;
+import org.jqassistant.plugin.github.model.GitHubRepository;
 import org.kohsuke.github.GHRepository;
 
 import java.io.IOException;

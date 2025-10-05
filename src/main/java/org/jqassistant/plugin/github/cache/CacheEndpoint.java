@@ -2,8 +2,21 @@ package org.jqassistant.plugin.github.cache;
 
 import com.buschmais.jqassistant.core.store.api.Store;
 import lombok.extern.slf4j.Slf4j;
-import org.jqassistant.plugin.github.model.*;
-import org.kohsuke.github.*;
+import org.jqassistant.plugin.github.model.GitHubIssue;
+import org.jqassistant.plugin.github.model.GitHubLabel;
+import org.jqassistant.plugin.github.model.GitHubMilestone;
+import org.jqassistant.plugin.github.model.GitHubPullRequest;
+import org.jqassistant.plugin.github.model.GitHubRelease;
+import org.jqassistant.plugin.github.model.GitHubRepository;
+import org.jqassistant.plugin.github.model.GitHubUser;
+import org.kohsuke.github.GHIssue;
+import org.kohsuke.github.GHLabel;
+import org.kohsuke.github.GHMilestone;
+import org.kohsuke.github.GHPullRequest;
+import org.kohsuke.github.GHRelease;
+import org.kohsuke.github.GHRepository;
+import org.kohsuke.github.GHUser;
+import org.kohsuke.github.GitUser;
 
 import java.io.IOException;
 import java.time.ZoneOffset;
@@ -85,7 +98,7 @@ public class CacheEndpoint {
     /**
      * Check for {@link GitHubIssue}.
      *
-     * @param ghIssue           The GitHub issue information.
+     * @param ghIssue The GitHub issue information.
      * @return The retrieved or newly created descriptor instance.
      */
     public GitHubIssue findOrCreateGitHubIssue(GHIssue ghIssue) {
@@ -233,7 +246,7 @@ public class CacheEndpoint {
     /**
      * Check for {@link GitHubMilestone}.
      *
-     * @param gHMilestone       The GitHub milestone information.
+     * @param gHMilestone The GitHub milestone information.
      * @return The retrieved or newly created descriptor instance.
      */
     public GitHubMilestone findOrCreateGitHubMilestone(GHMilestone gHMilestone) {
