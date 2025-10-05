@@ -28,6 +28,11 @@
             <name>Stephan Pirnbaum</name>
             <email>stephan.pirnbaum@buschmais.com</email>
         </developer>
+        <developer>
+            <id>gerd.aschemann</id>
+            <name>Gerd Aschemann</name>
+            <email>gerd@aschemann.net</email>
+        </developer>
     </developers>
 
     <scm>
