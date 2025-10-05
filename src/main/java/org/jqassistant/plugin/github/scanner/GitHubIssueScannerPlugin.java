@@ -29,14 +29,24 @@ public class GitHubIssueScannerPlugin extends AbstractUriScannerPlugin<GHReposit
     private GHRepository connect(URI uri) {
         try {
             GitHub gitHub = GitHub.connect();
-            String[] repoSplit = uri.getPath().split("/");
-            if (repoSplit.length != 3) { // leading /
-                LOGGER.error("Invalid GitHub repository URL specified. Needs to be <owner>/<name>");
-                return null;
-            }
-            return gitHub.getRepository(repoSplit[1] + "/" + repoSplit[2]);
+            return connect(gitHub, uri);
         } catch (IOException e) {
-            throw new RuntimeException("Unable to connect to GitHub repository", e);
+            try {
+                LOGGER.warn("Could not connect authenticated: {} - retrying anonymously", e.getMessage());
+                GitHub gitHub = GitHub.connectAnonymously();
+                return connect(gitHub, uri);
+            } catch (IOException ee) {
+                throw new RuntimeException("Unable to connect to GitHub repository", ee);
+            }
         }
+    }
+
+    private GHRepository connect(GitHub gitHub, URI uri) throws IOException {
+        String[] repoSplit = uri.getPath().split("/");
+        if (repoSplit.length != 3) { // leading /
+            LOGGER.error("Invalid GitHub repository URL specified. Needs to be <owner>/<name>");
+            return null;
+        }
+        return gitHub.getRepository(repoSplit[1] + "/" + repoSplit[2]);
     }
 }
