@@ -4,6 +4,69 @@
 This is a GitHub scanner for [jQAssistant](https://jqassistant.org/).
 It enables jQAssistant to scan and analyze GitHub repositories.
 
+[.lead]
+====
+This is a modified version that first tries to reuse a local git repository before retrieving Git commits,
+branches and tags from GitHub.
+This helps to reduce API calls and improve performance when analyzing repositories that are already available locally.
+
+Therefore, it uses the https://github.com/kontext-e/jqassistant-git-plugin[Git Plugin] (third party, provided by https://www.kontext-e.com/[Kontext-E]).
+
+The author currently provides a personal (snapshot) version
+
+[source, xml]
+include::pom.xml[tag=version]
+
+On his GitHub snapshot package repository
+
+[source, xml]
+----
+include::pom.xml[tag=repositories]
+----
+
+To access it, a user must configure an additional repository and provide respective credentials.
+
+[source,xml]
+.Example: Extended POM
+----
+    <repositories>
+        <repository>
+            <id>jqassistant-github-plugin</id>
+            <url>https://maven.pkg.github.com/ascheman/jqassistant-github-plugin</url>
+            <snapshots>
+                <enabled>true</enabled>
+            </snapshots>
+        </repository>
+    </repositories>
+----
+
+The user `settings.xml` file needs to contain credentials for this server, e.g., based on a suitable GitHub Personal Access Token (PAT), stored as environment variable `+${GITHUB_TOKEN}+`.
+
+[source,xml]
+.Settings snippet to authenticate towards the GitHub package repository.
+----
+   <servers>
+       <server>
+           <id>github</id>
+           <username>ascheman</username> <!--1-->
+           <password>${GITHUB_TOKEN}</password>
+       </server>
+   </servers>
+----
+<1> Set your username here.
+
+[NOTE]
+======
+To deploy the package, similar settings must be provided, e.g., by adding the xref:settings.xml[] to the Maven call:
+
+[source,shell]
+----
+mvn deploy -s settings.xml
+----
+======
+
+====
+
 == Using the jQAssistant GitHub Plugin
 
 [NOTE]
