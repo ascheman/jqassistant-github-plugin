@@ -3,7 +3,7 @@ package org.jqassistant.plugin.github.model;
 import com.buschmais.xo.neo4j.api.annotation.Label;
 import com.buschmais.xo.neo4j.api.annotation.Property;
 import com.buschmais.xo.neo4j.api.annotation.Relation;
-import com.fasterxml.jackson.databind.annotation.JsonAppend;
+import de.kontext_e.jqassistant.plugin.git.store.descriptor.GitCommitDescriptor;
 
 import java.time.ZonedDateTime;
 
@@ -15,10 +15,10 @@ public interface GitHubPullRequest extends GitHubIssue {
     void setMergedAt(ZonedDateTime mergedAt);
 
     @Relation("HAS_BASE")
-    GitHubCommit getBase();
-    void setBase(GitHubCommit base);
+    GitCommitDescriptor getBase();
+    void setBase(GitCommitDescriptor base);
 
     @Relation("HAS_HEAD")
-    GitHubCommit getHead();
-    void setHead(GitHubCommit head);
+    GitCommitDescriptor getHead();
+    void setHead(GitCommitDescriptor head);
 }

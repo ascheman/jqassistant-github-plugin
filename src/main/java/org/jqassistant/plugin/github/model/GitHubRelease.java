@@ -3,6 +3,7 @@ package org.jqassistant.plugin.github.model;
 import com.buschmais.xo.neo4j.api.annotation.Label;
 import com.buschmais.xo.neo4j.api.annotation.Property;
 import com.buschmais.xo.neo4j.api.annotation.Relation;
+import de.kontext_e.jqassistant.plugin.git.store.descriptor.GitTagDescriptor;
 
 @Label("Release")
 public interface GitHubRelease extends GitHub {
@@ -14,6 +15,6 @@ public interface GitHubRelease extends GitHub {
     void setName(String text);
 
     @Relation("REFERENCES_TAG")
-    GitHubTag getTag();
-    void setTag(GitHubTag tag);
+    GitTagDescriptor getTag();
+    void setTag(GitTagDescriptor tag);
 }

@@ -3,6 +3,8 @@ package org.jqassistant.plugin.github.scanner;
 import com.buschmais.jqassistant.core.scanner.api.Scanner;
 import com.buschmais.jqassistant.core.scanner.api.Scope;
 import com.buschmais.jqassistant.plugin.common.api.scanner.filesystem.FileResource;
+import de.kontext_e.jqassistant.plugin.git.store.descriptor.GitBranchDescriptor;
+import de.kontext_e.jqassistant.plugin.git.store.descriptor.GitTagDescriptor;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.jqassistant.plugin.github.cache.CacheEndpoint;
@@ -11,12 +13,15 @@ import org.jqassistant.plugin.github.model.GitHubMilestone;
 import org.jqassistant.plugin.github.model.GitHubPullRequest;
 import org.jqassistant.plugin.github.model.GitHubRelease;
 import org.jqassistant.plugin.github.model.GitHubRepository;
+import org.kohsuke.github.GHBranch;
+import org.kohsuke.github.GHCommit;
 import org.kohsuke.github.GHIssue;
 import org.kohsuke.github.GHIssueState;
 import org.kohsuke.github.GHMilestone;
 import org.kohsuke.github.GHPullRequest;
 import org.kohsuke.github.GHRelease;
 import org.kohsuke.github.GHRepository;
+import org.kohsuke.github.GHTag;
 import org.kohsuke.github.GitHub;
 
 import java.io.IOException;
@@ -91,7 +96,7 @@ class GraphBuilder {
     }
 
     private void importTags(GHRepository repository, GitHubRepository gitHubRepository) {
-        List<GitHubTag> tags = new LinkedList<>();
+        List<GitTagDescriptor> tags = new LinkedList<>();
         try{
             for(GHTag tag : repository.listTags()) {
                 log.debug("Found tag: {}", tag.getName());

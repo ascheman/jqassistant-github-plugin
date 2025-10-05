@@ -1,6 +1,8 @@
 package org.jqassistant.plugin.github.cache;
 
 import com.buschmais.jqassistant.core.store.api.Store;
+import de.kontext_e.jqassistant.plugin.git.store.descriptor.GitCommitDescriptor;
+import de.kontext_e.jqassistant.plugin.git.store.descriptor.GitTagDescriptor;
 import lombok.extern.slf4j.Slf4j;
 import org.jqassistant.plugin.github.model.GitHubIssue;
 import org.jqassistant.plugin.github.model.GitHubLabel;
@@ -15,13 +17,15 @@ import org.kohsuke.github.GHMilestone;
 import org.kohsuke.github.GHPullRequest;
 import org.kohsuke.github.GHRelease;
 import org.kohsuke.github.GHRepository;
+import org.kohsuke.github.GHTag;
 import org.kohsuke.github.GHUser;
 import org.kohsuke.github.GitUser;
 
 import java.io.IOException;
 import java.time.ZoneOffset;
-import java.util.List;
 import java.util.Optional;
+
+import static de.kontext_e.jqassistant.plugin.git.scanner.repositories.JQAssistantGitRepository.getCommitDescriptorFromDB;
 
 /**
  * <p>
@@ -76,20 +80,10 @@ public class CacheEndpoint {
         if (ghPullRequest.getMergedAt() != null) {
             pullRequest.setMergedAt(ghPullRequest.getMergedAt().toInstant().atZone(ZoneOffset.UTC));
         }
-        try {
-            pullRequest.setBase(findOrCreateGitHubCommit(ghPullRequest.getRepository(), ghPullRequest.getBase().getSha()));
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        }
-        try {
-            // avoid retrieving commits one by one
-            pullRequest.setHead(findOrCreateGitHubCommit(ghPullRequest.getRepository(), ghPullRequest.getHead().getSha()));
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        }
+        pullRequest.setBase(findGitCommit(ghPullRequest.getBase().getSha()));
+        pullRequest.setHead(findGitCommit(ghPullRequest.getHead().getSha()));
 
         populateIssueInformation(pullRequest, ghPullRequest);
-
         descriptorCache.put(pullRequest);
 
         return pullRequest;
@@ -254,38 +248,35 @@ public class CacheEndpoint {
         return milestone.orElseGet(() -> createGitHubMilestone(gHMilestone));
     }
 
-    public GitHubRelease findOrCreateGitHubRelease(GHRelease ghRelease) {
-        Optional<GitHubRelease> release = descriptorCache.getRelease(ghRelease.getName());
-        return release.orElseGet(() -> createGitHubRelease(ghRelease));
-    }
-
-    public GitHubTag findOrCreateGitHubTag(GHTag ghTag) {
-        Optional<GitHubTag> tag = descriptorCache.getTag(ghTag.getName());
+    public GitTagDescriptor findOrCreateGitHubTag(GHTag ghTag) {
+        Optional<GitTagDescriptor> tag = descriptorCache.getTag(ghTag.getName());
         return tag.orElseGet(() -> createGitHubTag(ghTag));
     }
 
-    private GitHubTag createGitHubTag(GHTag ghTag){
-        log.debug("Creating new tag: " + ghTag);
+    private GitTagDescriptor createGitHubTag(GHTag ghTag) {
+        log.debug("Creating new tag: {}", ghTag);
 
-        GitHubTag tag = store.create(GitHubTag.class);
-        tag.setName(ghTag.getName());
-        GitHubCommit commit = findOrCreateGitHubCommit(ghTag.getCommit());
+        GitTagDescriptor tag = store.create(GitTagDescriptor.class);
+        tag.setLabel(ghTag.getName());
+        GitCommitDescriptor commit = findGitCommit(ghTag.getCommit());
         tag.setCommit(commit);
         descriptorCache.put(tag);
         return tag;
     }
 
-    private GitHubRelease createGitHubRelease(GHRelease ghRelease){
+    public GitHubRelease findOrCreateGitHubRelease(GHRelease ghRelease) {
+        Optional<GitHubRelease> release = descriptorCache.getRelease(ghRelease.getName());
+        return release.orElseGet(() -> createGitHubRelease(ghRelease));
+    }
+
+    private GitHubRelease createGitHubRelease(GHRelease ghRelease) {
         log.debug("Creating new release: " + ghRelease);
 
         GitHubRelease release = store.create(GitHubRelease.class);
         release.setName(ghRelease.getName());
         release.setBody(ghRelease.getBody());
-        Optional<GitHubTag> optionalTag = descriptorCache.getTag(ghRelease.getTagName());
-        if(optionalTag.isPresent()){
-            GitHubTag tag = optionalTag.get();
-            release.setTag(tag);
-        }
+        Optional<GitTagDescriptor> optionalTag = descriptorCache.getTag(ghRelease.getTagName());
+        optionalTag.ifPresent(release::setTag);
         descriptorCache.put(release);
         return release;
     }
@@ -327,82 +318,19 @@ public class CacheEndpoint {
         return milestone;
     }
 
-    public GitHubCommit findOrCreateGitHubCommit(GHRepository ghRepository, String sha1) throws IOException {
-        Optional<GitHubCommit> optionalCommit = descriptorCache.getCommit(sha1);
-        if (optionalCommit.isPresent()) {
-            return optionalCommit.get();
+    public GitCommitDescriptor findGitCommit(String sha1) {
+        Optional<GitCommitDescriptor> optionalCommit = descriptorCache.getCommit(sha1);
+        return optionalCommit.orElseGet(() -> createGitCommitDescriptor(sha1));
+    }
+
+    private GitCommitDescriptor createGitCommitDescriptor(String sha1) {
+        GitCommitDescriptor commit = getCommitDescriptorFromDB(store, sha1);
+        if (commit == null) {
+            log.warn("Could not retrieve commit '{}' (probably from an old PR or remote repo)", sha1);
         } else {
-            return createGitHubCommit(ghRepository.getCommit(sha1));
+            log.debug("Found existing commit '{}'", sha1);
+            descriptorCache.put(commit);
         }
-    }
-    public GitHubCommit findOrCreateGitHubCommit(GHCommit ghCommit) {
-        Optional<GitHubCommit> optionalCommit = descriptorCache.getCommit(ghCommit.getSHA1());
-
-        return optionalCommit.orElseGet(() -> createGitHubCommit(ghCommit));
-    }
-
-    private GitHubCommit createGitHubCommit(GHCommit ghCommit) {
-        log.debug("Creating new commit: " + ghCommit.getSHA1());
-        GitHubCommit commit = store.create(GitHubCommit.class);
-        commit.setSha(ghCommit.getSHA1());
-        try {
-            ghCommit.getCommitDate().toInstant().atZone(ZoneOffset.UTC);
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        }
-        try {
-            if (ghCommit.getCommitShortInfo().getAuthor() != null) {
-                commit.setAuthor(findOrCreateGitHubUser(ghCommit.getCommitShortInfo().getAuthor()));
-            }
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        }
-        try {
-            commit.setCommitter(findOrCreateGitHubUser(ghCommit.getCommitShortInfo().getCommitter()));
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        }
-        try {
-            commit.setCommitDate(ghCommit.getCommitDate().toInstant().atZone(ZoneOffset.UTC));
-            if (ghCommit.getAuthoredDate() != null) {
-                commit.setAuthoredDate(ghCommit.getAuthoredDate().toInstant().atZone(ZoneOffset.UTC));
-            }
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        }
-
-        for (String parentSHA1 : ghCommit.getParentSHA1s()) {
-            try {
-                commit.getParents().add(findOrCreateGitHubCommit(ghCommit.getOwner(), parentSHA1));
-            } catch (IOException e) {
-                throw new RuntimeException(e);
-            }
-        }
-
-        descriptorCache.put(commit);
         return commit;
-    }
-
-    public GitHubBranch findOrCreateGitHubBranch(GHBranch ghBranch, List<GHCommit> commits) {
-        log.debug("Creating new branch: {}", ghBranch.getName());
-        GitHubBranch branch = store.create(GitHubBranch.class);
-        branch.setName(ghBranch.getName());
-
-        // commits are ordered newest to oldest, thus first importing oldest to avoid retrieving parent from GitHub
-        // branched parents are also included in the list, so no risk that commits are retrieved from GitHub API separately
-        for (int i = commits.size() - 1; i >= 0; i--) {
-            GHCommit ghCommit = commits.get(i);
-
-            findOrCreateGitHubCommit(ghCommit);
-        }
-
-        try {
-            branch.setHead(findOrCreateGitHubCommit(ghBranch.getOwner(), ghBranch.getSHA1()));
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        }
-
-        descriptorCache.setBranch(branch);
-        return branch;
     }
 }

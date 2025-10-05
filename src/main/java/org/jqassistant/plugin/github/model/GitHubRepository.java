@@ -5,6 +5,8 @@ import com.buschmais.jqassistant.plugin.common.api.model.NamedDescriptor;
 import com.buschmais.xo.neo4j.api.annotation.Label;
 import com.buschmais.xo.neo4j.api.annotation.Property;
 import com.buschmais.xo.neo4j.api.annotation.Relation;
+import de.kontext_e.jqassistant.plugin.git.store.descriptor.GitBranchDescriptor;
+import de.kontext_e.jqassistant.plugin.git.store.descriptor.GitTagDescriptor;
 
 import java.util.List;
 
@@ -29,12 +31,11 @@ public interface GitHubRepository extends GitHub, Descriptor, NamedDescriptor {
     List<GitHubRelease> getReleases();
 
     @Relation("HAS_TAG")
-    List<GitHubTag> getTags();
+    List<GitTagDescriptor> getTags();
 
     @Relation("HAS_PULL_REQUEST")
     List<GitHubPullRequest> getPullRequests();
 
     @Relation("HAS_BRANCH")
-    GitHubBranch getBranch();
-    void setBranch(GitHubBranch branch);
+    List<GitBranchDescriptor> getBranches();
 }

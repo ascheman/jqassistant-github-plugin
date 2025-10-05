@@ -6,13 +6,10 @@
     <description>${project.description}</description>
     <model>
         <class>org.jqassistant.plugin.github.model.GitHub</class>
-        <class>org.jqassistant.plugin.github.model.GitHubBranch</class>
-        <class>org.jqassistant.plugin.github.model.GitHubCommit</class>
         <class>org.jqassistant.plugin.github.model.GitHubIssue</class>
         <class>org.jqassistant.plugin.github.model.GitHubLabel</class>
         <class>org.jqassistant.plugin.github.model.GitHubMilestone</class>
         <class>org.jqassistant.plugin.github.model.GitHubRelease</class>
-        <class>org.jqassistant.plugin.github.model.GitHubTag</class>
         <class>org.jqassistant.plugin.github.model.GitHubRepository</class>
         <class>org.jqassistant.plugin.github.model.GitHubUser</class>
         <class>org.jqassistant.plugin.github.model.GitHubPullRequest</class>

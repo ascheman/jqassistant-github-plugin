@@ -1,6 +1,8 @@
 package org.jqassistant.plugin.github.cache;
 
 
+import de.kontext_e.jqassistant.plugin.git.store.descriptor.GitCommitDescriptor;
+import de.kontext_e.jqassistant.plugin.git.store.descriptor.GitTagDescriptor;
 import lombok.Getter;
 import lombok.Setter;
 import org.jqassistant.plugin.github.model.GitHubIssue;
@@ -25,13 +27,13 @@ class DescriptorCache {
     @Getter
     private GitHubRepository repository;
 
-    private final TreeMap<String, GitHubCommit> commits = new TreeMap<>();
+    private final TreeMap<String, GitCommitDescriptor> commits = new TreeMap<>();
     private final TreeMap<Integer, GitHubIssue> issues = new TreeMap<>();
     private final TreeMap<String, GitHubUser> users = new TreeMap<>();
     private final TreeMap<String, GitHubLabel> labels = new TreeMap<>();
     private final TreeMap<Integer, GitHubMilestone> milestones = new TreeMap<>();
     private final TreeMap<String, GitHubRelease> releases = new TreeMap<>();
-    private final TreeMap<String, GitHubTag> tags = new TreeMap<>();
+    private final TreeMap<String, GitTagDescriptor> tags = new TreeMap<>();
 
     Optional<GitHubMilestone> getMilestone(Integer milestoneID) {
         return Optional.ofNullable(milestones.get(milestoneID));
@@ -45,7 +47,7 @@ class DescriptorCache {
         return Optional.ofNullable(labels.get(labelID));
     }
 
-    Optional<GitHubCommit> getCommit(String commitID) {
+    Optional<GitCommitDescriptor> getCommit(String commitID) {
         return Optional.ofNullable(commits.get(commitID));
     }
 
@@ -61,7 +63,9 @@ class DescriptorCache {
         return Optional.ofNullable(releases.get(releaseName));
     }
 
-    Optional<GitHubTag> getTag(String tagName) { return Optional.ofNullable(tags.get(tagName)); }
+    Optional<GitTagDescriptor> getTag(String tagName) {
+        return Optional.ofNullable(tags.get(tagName));
+    }
 
     void put(GitHubUser user) {
         if (user.getUsername() != null) {
@@ -79,7 +83,7 @@ class DescriptorCache {
         milestones.putIfAbsent(milestone.getNumber(), milestone);
     }
 
-    void put(GitHubCommit commit) {
+    void put(GitCommitDescriptor commit) {
         this.commits.putIfAbsent(commit.getSha(), commit);
     }
 
@@ -91,6 +95,8 @@ class DescriptorCache {
         this.releases.putIfAbsent(release.getName(), release);
     }
 
-    void put(GitHubTag tag) { this.tags.putIfAbsent(tag.getName(), tag); }
+    void put(GitTagDescriptor tag) {
+        this.tags.putIfAbsent(tag.getLabel(), tag);
+    }
 
 }
