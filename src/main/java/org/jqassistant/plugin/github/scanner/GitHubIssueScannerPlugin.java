@@ -10,6 +10,7 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.net.URI;
+import java.net.URISyntaxException;
 import java.util.Optional;
 
 public class GitHubIssueScannerPlugin extends AbstractUriScannerPlugin<GHRepository> {
@@ -27,6 +28,15 @@ public class GitHubIssueScannerPlugin extends AbstractUriScannerPlugin<GHReposit
     }
 
     private GHRepository connect(URI uri) {
+        String uriString = uri.toString();
+        if (uriString.endsWith(".git")) {
+            LOGGER.warn("Repository URI ('{}') must not end with '.git', cutting this off", uriString);
+            try {
+                uri = new URI(uriString.substring(0, uriString.length() - 4));
+            } catch (URISyntaxException e) {
+                throw new RuntimeException(String.format("This should never happen, as the String comes from valid URI: '%s'", uriString), e);
+            }
+        }
         try {
             GitHub gitHub = GitHub.connect();
             return connect(gitHub, uri);
