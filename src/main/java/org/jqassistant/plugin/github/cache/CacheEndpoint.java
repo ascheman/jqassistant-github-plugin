@@ -13,6 +13,8 @@ import org.jqassistant.plugin.github.model.GitHubPullRequest;
 import org.jqassistant.plugin.github.model.GitHubRelease;
 import org.jqassistant.plugin.github.model.GitHubRepository;
 import org.jqassistant.plugin.github.model.GitHubUser;
+import org.kohsuke.github.GHBranch;
+import org.kohsuke.github.GHCommit;
 import org.kohsuke.github.GHIssue;
 import org.kohsuke.github.GHLabel;
 import org.kohsuke.github.GHMilestone;
@@ -83,8 +85,40 @@ public class CacheEndpoint {
         if (ghPullRequest.getMergedAt() != null) {
             pullRequest.setMergedAt(ghPullRequest.getMergedAt().toInstant().atZone(ZoneOffset.UTC));
         }
-        pullRequest.setBase(findGitCommit(ghPullRequest.getBase().getSha()));
-        pullRequest.setHead(findGitCommit(ghPullRequest.getHead().getSha()));
+        try {
+            pullRequest.setBase(findGitCommit(ghPullRequest.getBase().getCommit()));
+        } catch (IOException e) {
+            log.warn("Cannot retrieve Base Commit '{}' for '{}#{}'",
+                ghPullRequest.getBase().getRef(),
+                ghPullRequest.getHtmlUrl(),
+                ghPullRequest.getId()
+            );
+        }
+        try {
+            var head = ghPullRequest.getHead();
+            if (null != head) {
+                if (null == head.getRepository()) {
+                    log.warn("Cannot find Head Commit '{}' of '{}#{}'",
+                        head.getRef(),
+                        ghPullRequest.getHtmlUrl(),
+                        ghPullRequest.getId()
+                    );
+                } else {
+                    pullRequest.setHead(findGitCommit(head.getCommit()));
+                }
+            } else {
+                log.warn("Cannot find Head Commit for '{}#{}'",
+                    ghPullRequest.getHtmlUrl(),
+                    ghPullRequest.getId()
+                );
+            }
+        } catch (IOException e) {
+            log.warn("Cannot retrieve Head Commit '{}' for '{}#{}'",
+                ghPullRequest.getHead().getRef(),
+                ghPullRequest.getHtmlUrl(),
+                ghPullRequest.getId()
+            );
+        }
 
         populateIssueInformation(pullRequest, ghPullRequest);
         descriptorCache.put(pullRequest);
@@ -333,19 +367,61 @@ public class CacheEndpoint {
         return milestone;
     }
 
-    public GitCommitDescriptor findGitCommit(String sha1) {
-        Optional<GitCommitDescriptor> optionalCommit = descriptorCache.getCommit(sha1);
-        return optionalCommit.orElseGet(() -> createGitCommitDescriptor(sha1));
+    public GitCommitDescriptor findGitCommit(GHCommit ghCommit) {
+        Optional<GitCommitDescriptor> optionalCommit = descriptorCache.getCommit(ghCommit.getSHA1());
+        return optionalCommit.orElseGet(() -> createGitCommitDescriptor(ghCommit));
     }
 
-    private GitCommitDescriptor createGitCommitDescriptor(String sha1) {
-        GitCommitDescriptor commit = getCommitDescriptorFromDB(store, sha1);
+    private GitCommitDescriptor createGitCommitDescriptor(GHCommit ghCommit) {
+        GitCommitDescriptor commit = getCommitDescriptorFromDB(store, ghCommit.getSHA1());
         if (commit == null) {
-            log.warn("Could not retrieve commit '{}' (probably from an old PR or remote repo)", sha1);
+            log.debug("Using '{}' from remote repository", ghCommit.getSHA1());
+            commit = createGitHubCommit(ghCommit);
         } else {
-            log.debug("Found existing commit '{}'", sha1);
-            descriptorCache.put(commit);
+            log.debug("Found existing commit '{}'", ghCommit.getSHA1());
         }
+        descriptorCache.put(commit);
+        return commit;
+    }
+
+    private GitCommitDescriptor createGitHubCommit(GHCommit ghCommit) {
+        GitCommitDescriptor commit = store.create(GitCommitDescriptor.class);
+        commit.setSha(ghCommit.getSHA1());
+        try {
+            ghCommit.getCommitDate().toInstant().atZone(ZoneOffset.UTC);
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+        try {
+            if (ghCommit.getAuthor() != null) {
+                findOrCreateGitHubUser(ghCommit.getAuthor()).ifPresent(user -> commit.setAuthor(user.getName()));
+            }
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+        try {
+            if (ghCommit.getCommitter() != null) {
+                findOrCreateGitHubUser(ghCommit.getCommitter()).ifPresent(user -> commit.setCommitter(user.getName()));
+            }
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+        try {
+            commit.setDate(ghCommit.getCommitDate().toString());
+            // TODO Distinguish between commit and author date
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+
+        try {
+            for (GHCommit parent : ghCommit.getParents()) {
+                commit.getParents().add(findGitCommit(parent));
+            }
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+
+        descriptorCache.put(commit);
         return commit;
     }
 }
