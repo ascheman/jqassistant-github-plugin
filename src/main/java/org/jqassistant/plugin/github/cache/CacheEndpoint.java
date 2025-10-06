@@ -424,4 +424,15 @@ public class CacheEndpoint {
         descriptorCache.put(commit);
         return commit;
     }
+
+    public GitBranchDescriptor findOrCreateGitHubBranch(GHBranch ghBranch, List<GHCommit> ghCommits) {
+        log.debug("Creating new branch: {}", ghBranch.getName());
+        GitBranchDescriptor branch = store.create(GitBranchDescriptor.class);
+        branch.setName(ghBranch.getName());
+        for (GHCommit ghCommit : ghCommits) {
+            findGitCommit(ghCommit);
+        }
+        branch.setHead(findGitCommit(ghCommits.get(0)));
+        return branch;
+    }
 }

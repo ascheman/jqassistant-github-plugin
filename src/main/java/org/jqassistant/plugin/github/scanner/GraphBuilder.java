@@ -50,7 +50,8 @@ class GraphBuilder {
 
         GitHubRepository gitHubRepository = cacheEndpoint.findOrCreateGitHubRepository(ghRepository);
 
-        importPullRequests(ghRepository, gitHubRepository); // first import PRs, because they'll also be returned when fetching issues
+        importBranches(ghRepository, gitHubRepository); // first import branches, because they'll also be returned when fetching PRs
+        importPullRequests(ghRepository, gitHubRepository); // then import PRs, because they'll also be returned when fetching issues
         importMilestones(ghRepository, gitHubRepository);
         importIssues(ghRepository, gitHubRepository);
         importTags(ghRepository, gitHubRepository);
@@ -59,6 +60,26 @@ class GraphBuilder {
         log.info("Repository scan complete");
         log.info("Remaining rate limit for user: {}", gitHub.getRateLimit());
         return gitHubRepository;
+    }
+
+    private void importBranches(GHRepository repository, GitHubRepository gitHubRepository) {
+        List<GitBranchDescriptor> branches = new LinkedList<>();
+        try {
+            repository.getBranches().forEach((String branchName, GHBranch ghBranch) -> {
+                log.debug("Found branch: {}", branchName);
+                List<GHCommit> ghCommits = null;
+                try {
+                    ghCommits = repository.queryCommits().from(branchName).list().toList();
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
+                }
+                branches.add(cacheEndpoint.findOrCreateGitHubBranch(ghBranch, ghCommits));
+            });
+        } catch(IOException e){
+            throw new RuntimeException();
+        }
+        gitHubRepository.getBranches().addAll(branches);
+        log.info("Imported {} branches", branches.size());
     }
 
     private void importPullRequests(GHRepository repository, GitHubRepository gitHubRepository) {
