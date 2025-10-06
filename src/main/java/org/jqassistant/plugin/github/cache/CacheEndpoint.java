@@ -139,7 +139,7 @@ public class CacheEndpoint {
     }
 
     private GitHubIssue createGitHubIssue(GHIssue ghIssue) {
-        log.debug("Creating new issue: " + ghIssue);
+        log.debug("Creating new issue: {}", ghIssue);
         GitHubIssue issue;
         issue = store.create(GitHubIssue.class);
         populateIssueInformation(issue, ghIssue);
@@ -275,7 +275,7 @@ public class CacheEndpoint {
     }
 
     private GitHubLabel createGitHubLabel(GHLabel ghLabel) {
-        log.debug("Creating new label: " + ghLabel);
+        log.debug("Creating new label: '{}@{}' ('{}' with color '{}')", ghLabel.getName(), ghLabel.getUrl(), ghLabel.getDescription(), ghLabel.getColor());
         GitHubLabel label = store.create(GitHubLabel.class);
         label.setName(ghLabel.getName());
         label.setDescription(ghLabel.getDescription());
@@ -319,7 +319,7 @@ public class CacheEndpoint {
     }
 
     private GitHubRelease createGitHubRelease(GHRelease ghRelease) {
-        log.debug("Creating new release: " + ghRelease);
+        log.debug("Creating new release: {}", ghRelease);
 
         GitHubRelease release = store.create(GitHubRelease.class);
         release.setName(ghRelease.getName());
@@ -331,7 +331,7 @@ public class CacheEndpoint {
     }
 
     private GitHubMilestone createGitHubMilestone(GHMilestone ghMilestone) {
-        log.debug("Creating new milestone: " + ghMilestone);
+        log.debug("Creating new milestone: {}", ghMilestone);
 
         GitHubMilestone milestone = store.create(GitHubMilestone.class);
         milestone.setNumber(ghMilestone.getNumber());
