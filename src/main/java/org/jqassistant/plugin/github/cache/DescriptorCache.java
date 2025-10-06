@@ -13,6 +13,7 @@ import org.jqassistant.plugin.github.model.GitHubRelease;
 import org.jqassistant.plugin.github.model.GitHubRepository;
 import org.jqassistant.plugin.github.model.GitHubUser;
 
+import java.util.Map;
 import java.util.Optional;
 import java.util.TreeMap;
 
@@ -27,13 +28,14 @@ class DescriptorCache {
     @Getter
     private GitHubRepository repository;
 
-    private final TreeMap<String, GitCommitDescriptor> commits = new TreeMap<>();
-    private final TreeMap<Integer, GitHubIssue> issues = new TreeMap<>();
-    private final TreeMap<String, GitHubUser> users = new TreeMap<>();
-    private final TreeMap<String, GitHubLabel> labels = new TreeMap<>();
-    private final TreeMap<Integer, GitHubMilestone> milestones = new TreeMap<>();
-    private final TreeMap<String, GitHubRelease> releases = new TreeMap<>();
-    private final TreeMap<String, GitTagDescriptor> tags = new TreeMap<>();
+    private final Map<String, GitCommitDescriptor> commits = new TreeMap<>();
+    private final Map<Integer, GitHubIssue> issues = new TreeMap<>();
+    private final Map<String, GitHubUser> users = new TreeMap<>();
+    private final Map<String, GitHubLabel> labels = new TreeMap<>();
+    private final Map<Integer, GitHubMilestone> milestones = new TreeMap<>();
+    private final Map<String, GitHubRelease> releases = new TreeMap<>();
+    private final Map<String, GitTagDescriptor> tags = new TreeMap<>();
+    private final Map<String, GitBranchDescriptor> branches = new TreeMap<>();
 
     Optional<GitHubMilestone> getMilestone(Integer milestoneID) {
         return Optional.ofNullable(milestones.get(milestoneID));
