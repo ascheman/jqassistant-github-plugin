@@ -39,8 +39,8 @@ class DescriptorCache {
         return Optional.ofNullable(milestones.get(milestoneID));
     }
 
-    Optional<GitHubUser> getUser(String userID) {
-        return Optional.ofNullable(users.get(userID));
+    Optional<GitHubUser> getUser(String userName) {
+        return Optional.ofNullable(users.get(userName));
     }
 
     Optional<GitHubLabel> getLabel(String labelID) {
@@ -68,11 +68,7 @@ class DescriptorCache {
     }
 
     void put(GitHubUser user) {
-        if (user.getUsername() != null) {
-            this.users.put(user.getUsername(), user);
-        } else if (user.getEmail() != null) {
-            this.users.put(user.getEmail(), user);
-        }
+        this.users.putIfAbsent(user.getUsername(), user);
     }
 
     void put(GitHubLabel label) {

@@ -1,6 +1,8 @@
 package org.jqassistant.plugin.github.cache;
 
 import com.buschmais.jqassistant.core.store.api.Store;
+import com.buschmais.xo.api.Query;
+import de.kontext_e.jqassistant.plugin.git.store.descriptor.GitBranchDescriptor;
 import de.kontext_e.jqassistant.plugin.git.store.descriptor.GitCommitDescriptor;
 import de.kontext_e.jqassistant.plugin.git.store.descriptor.GitTagDescriptor;
 import lombok.extern.slf4j.Slf4j;
@@ -19,10 +21,11 @@ import org.kohsuke.github.GHRelease;
 import org.kohsuke.github.GHRepository;
 import org.kohsuke.github.GHTag;
 import org.kohsuke.github.GHUser;
-import org.kohsuke.github.GitUser;
 
 import java.io.IOException;
 import java.time.ZoneOffset;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static de.kontext_e.jqassistant.plugin.git.scanner.repositories.JQAssistantGitRepository.getCommitDescriptorFromDB;
@@ -123,7 +126,7 @@ public class CacheEndpoint {
             // todo
         }
         try {
-            issue.setCreatedBy(findOrCreateGitHubUser(ghIssue.getUser()));
+            findOrCreateGitHubUser(ghIssue.getUser()).ifPresent(issue::setCreatedBy);
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
@@ -140,14 +143,15 @@ public class CacheEndpoint {
         }
         try {
             if (ghIssue.getClosedBy() != null) {
-                issue.setClosedBy(findOrCreateGitHubUser(ghIssue.getClosedBy()));
+                findOrCreateGitHubUser(ghIssue.getClosedBy()).ifPresent(issue::setClosedBy);
             }
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
         for (GHUser assignee : ghIssue.getAssignees()) {
             try {
-                issue.getAssignees().add(findOrCreateGitHubUser(assignee));
+                Optional<GitHubUser> user = findOrCreateGitHubUser(assignee);
+                user.ifPresent(gitHubUser -> issue.getAssignees().add(gitHubUser));
             } catch (IOException e) {
                 throw new RuntimeException(e);
             }
@@ -160,57 +164,68 @@ public class CacheEndpoint {
     /**
      * Check for {@link GitHubUser}.
      *
-     * @param gitUser The GitHub user information.
+     * @param ghUser The GitHub user information.
      * @return The retrieved or newly created descriptor instance.
      */
-    public GitHubUser findOrCreateGitHubUser(GitUser gitUser) {
-        return createGitHubUser(gitUser.getEmail(), gitUser.getUsername(), gitUser.getName());
+    public Optional<GitHubUser> findOrCreateGitHubUser(GHUser ghUser) throws IOException {
+        if (null == ghUser) {
+            log.warn("Cannot find or create 'null' user");
+            return Optional.empty();
+        }
+        String userName = ghUser.getLogin();
+        if (userName == null) {
+            log.error("GitHub users must have a login (skipping!): '{}'", ghUser);
+            return Optional.empty();
+        }
+        log.debug("Retrieving GitHubuser '{}' from cache", userName);
+        Optional<GitHubUser> optionalGitHubUser = descriptorCache.getUser(userName);
+        if (optionalGitHubUser.isPresent()) {
+            return optionalGitHubUser;
+        }
+        return Optional.ofNullable(createGitHubUser(userName, ghUser));
     }
 
-    public GitHubUser findOrCreateGitHubUser(GHUser ghUser) throws IOException {
-        String email = ghUser.getEmail();
-        String name = ghUser.getName();
-        String login = ghUser.getLogin();
-
-        return createGitHubUser(email, login, name);
+    private GitHubUser getGitHubUserFromDB(String userName) {
+        log.debug("Retrieving GitHub user '{}' from DB", userName);
+        String query = "MATCH (u:GitHub:User) WHERE u.username = $username RETURN u";
+        try (Query.Result<Query.Result.CompositeRowObject> result = store.executeQuery(query, Map.of("username", userName))) {
+            if (result.hasResult()) {
+                return result.iterator().next().get("u", GitHubUser.class);
+            }
+        }
+        return null;
     }
 
-    private GitHubUser createGitHubUser(String email, String userName, String name) {
-        if (userName == null && email == null) {
-            log.warn("Neither username nor email set for user. Skipping.");
-            return null;
+    private GitHubUser createGitHubUser(String userName, GHUser ghUser) {
+        GitHubUser gitHubUser = getGitHubUserFromDB(userName);
+        if (null != gitHubUser) {
+            log.debug("Adding existing GitHub user to cache: '{}' ({} <{}>)", userName, gitHubUser.getName(), gitHubUser.getEmail());
+            descriptorCache.put(gitHubUser);
+            return gitHubUser;
         }
-        // username or email may not be present
-        Optional<GitHubUser> optionalUser = Optional.empty();
-        if (userName != null) {
-            optionalUser = descriptorCache.getUser(userName);
-        }
-        // may be present via email
-        if (!optionalUser.isPresent() && email != null) {
-            optionalUser = descriptorCache.getUser(email);
-        }
-        if (optionalUser.isPresent()) {
-            if (email != null && optionalUser.get().getEmail() == null) {
-                optionalUser.get().setEmail(email);
-            }
-            if (userName != null && optionalUser.get().getUsername() == null) {
-                optionalUser.get().setUsername(userName);
-            }
-            if (name != null && optionalUser.get().getName() == null) {
-                optionalUser.get().setName(name);
-            }
-            return optionalUser.get();
-        } else {
-            log.debug("Creating new user: " + email);
-            GitHubUser user = store.create(GitHubUser.class);
-            user.setEmail(email);
-            user.setUsername(userName);
-            user.setName(name);
 
-            descriptorCache.put(user);
-
-            return user;
+        String email = null;
+        try {
+            email = ghUser.getEmail();
+        } catch (IOException e) {
+            log.warn("Cannot retrieve email for '{}'", userName, e);
         }
+        String name = null;
+        try {
+            name = ghUser.getName();
+        } catch (IOException e) {
+            log.warn("Cannot retrieve (real) name for '{}'", userName, e);
+        }
+        log.debug("Creating new GitHub user in DB: '{}' ({} <{}>)", userName, name, email);
+        gitHubUser = store.create(GitHubUser.class);
+        gitHubUser.setEmail(email);
+        gitHubUser.setUsername(userName);
+        gitHubUser.setName(name);
+
+        log.debug("Adding new GitHub user to cache: '{}' ({} <{}>)", userName, name, email);
+        descriptorCache.put(gitHubUser);
+
+        return gitHubUser;
     }
 
     /**
@@ -307,7 +322,7 @@ public class CacheEndpoint {
 
         try {
             if (ghMilestone.getCreator() != null) {
-                milestone.setCreatedBy(findOrCreateGitHubUser(ghMilestone.getCreator()));
+                findOrCreateGitHubUser(ghMilestone.getCreator()).ifPresent(milestone::setCreatedBy);
             }
         } catch (IOException e) {
             throw new RuntimeException(e);
