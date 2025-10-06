@@ -1,6 +1,7 @@
 package org.jqassistant.plugin.github.cache;
 
 
+import de.kontext_e.jqassistant.plugin.git.store.descriptor.GitBranchDescriptor;
 import de.kontext_e.jqassistant.plugin.git.store.descriptor.GitCommitDescriptor;
 import de.kontext_e.jqassistant.plugin.git.store.descriptor.GitTagDescriptor;
 import lombok.Getter;
@@ -69,6 +70,10 @@ class DescriptorCache {
         return Optional.ofNullable(tags.get(tagName));
     }
 
+    Optional<GitBranchDescriptor> getBranch(String branchName) {
+        return Optional.ofNullable(branches.get(branchName));
+    }
+
     void put(GitHubUser user) {
         this.users.putIfAbsent(user.getUsername(), user);
     }
@@ -97,4 +102,7 @@ class DescriptorCache {
         this.tags.putIfAbsent(tag.getLabel(), tag);
     }
 
+    void put(GitBranchDescriptor branch) {
+        this.branches.putIfAbsent(branch.getName(), branch);
+    }
 }

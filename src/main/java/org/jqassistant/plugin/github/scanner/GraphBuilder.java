@@ -66,7 +66,7 @@ class GraphBuilder {
         List<GitBranchDescriptor> branches = new LinkedList<>();
         try {
             repository.getBranches().forEach((String branchName, GHBranch ghBranch) -> {
-                log.debug("Found branch: {}", branchName);
+                log.debug("Found remote branch: {}", branchName);
                 List<GHCommit> ghCommits = null;
                 try {
                     ghCommits = repository.queryCommits().from(branchName).list().toList();
@@ -75,7 +75,7 @@ class GraphBuilder {
                 }
                 branches.add(cacheEndpoint.findOrCreateGitHubBranch(ghBranch, ghCommits));
             });
-        } catch(IOException e){
+        } catch (IOException e) {
             throw new RuntimeException();
         }
         gitHubRepository.getBranches().addAll(branches);
@@ -86,7 +86,16 @@ class GraphBuilder {
         List<GitHubPullRequest> pullRequests = new LinkedList<>();
         for (GHPullRequest ghPullRequest : repository.queryPullRequests().state(GHIssueState.ALL).list()) {
             log.debug("Found pull request: {}", ghPullRequest.getNumber());
-            pullRequests.add(cacheEndpoint.findOrCreatePullRequest(ghPullRequest));
+            List<GHCommit> ghCommits = new LinkedList<>();
+            // Retrieve all commits that belong to this PR
+            ghPullRequest.listCommits().forEach(commitDetail -> {
+                try {
+                    ghCommits.add(repository.getCommit(commitDetail.getSha()));
+                } catch (IOException e) {
+                    log.warn("Cannot retrieve remote commit '{}' for PullRequest #{}", commitDetail.getSha(), ghPullRequest.getNumber());
+                }
+            });
+            pullRequests.add(cacheEndpoint.findOrCreatePullRequest(ghPullRequest, ghCommits));
         }
         gitHubRepository.getPullRequests().addAll(pullRequests);
         log.info("Imported {} pull requests", pullRequests.size());
@@ -104,28 +113,45 @@ class GraphBuilder {
 
     private void importReleases(GHRepository repository, GitHubRepository gitHubRepository) {
         List<GitHubRelease> releases = new LinkedList<>();
-        try{
+        try {
             for (GHRelease release : repository.listReleases()) {
                 log.debug("Found release: {}", release.getName());
                 releases.add(cacheEndpoint.findOrCreateGitHubRelease(release));
             }
             gitHubRepository.getReleases().addAll(releases);
             log.info("Imported {} releases", releases.size());
-        } catch(IOException e){
+        } catch (IOException e) {
             throw new RuntimeException();
         }
     }
 
     private void importTags(GHRepository repository, GitHubRepository gitHubRepository) {
         List<GitTagDescriptor> tags = new LinkedList<>();
-        try{
-            for(GHTag tag : repository.listTags()) {
+        try {
+            for (GHTag tag : repository.listTags()) {
                 log.debug("Found tag: {}", tag.getName());
-                tags.add(cacheEndpoint.findOrCreateGitHubTag(tag));
+                List<GHCommit> ghCommits = new LinkedList<>();
+                try {
+                    // Resolve the tag reference to its commit SHA and retrieve all reachable commits efficiently
+                    var ref = repository.getRef("tags/" + tag.getName());
+                    if (ref != null && ref.getObject() != null && ref.getObject().getSha() != null) {
+                        String sha = ref.getObject().getSha();
+                        ghCommits = repository.queryCommits().from(sha).list().toList();
+                    } else {
+                        log.warn("Cannot resolve ref for tag '{}'", tag.getName());
+                    }
+                } catch (IOException e) {
+                    log.warn("Cannot retrieve commits for tag '{}' from '{}'", tag.getName(), repository.getHtmlUrl(), e);
+                }
+                if (!ghCommits.isEmpty()) {
+                    tags.add(cacheEndpoint.findOrCreateGitHubTag(tag, ghCommits));
+                } else {
+                    log.warn("No commits resolved for tag '{}', skipping tag import.", tag.getName());
+                }
             }
             gitHubRepository.getTags().addAll(tags);
             log.info("Imported {} tags", tags.size());
-        } catch(IOException e){
+        } catch (IOException e) {
             throw new RuntimeException();
         }
     }

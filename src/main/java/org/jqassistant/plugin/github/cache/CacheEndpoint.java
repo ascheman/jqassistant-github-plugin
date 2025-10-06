@@ -26,6 +26,7 @@ import org.kohsuke.github.GHUser;
 
 import java.io.IOException;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -73,51 +74,55 @@ public class CacheEndpoint {
         return repository;
     }
 
-    public GitHubPullRequest findOrCreatePullRequest(GHPullRequest ghPullRequest) {
+    public GitHubPullRequest findOrCreatePullRequest(GHPullRequest ghPullRequest, List<GHCommit> ghCommits) {
         // A pull request is a special kind of issue
         return this.descriptorCache.getPullRequest(ghPullRequest.getNumber())
-            .orElseGet(() -> createGitHubPullRequest(ghPullRequest));
+            .orElseGet(() -> createGitHubPullRequest(ghPullRequest, ghCommits));
     }
 
-    private GitHubPullRequest createGitHubPullRequest(GHPullRequest ghPullRequest) {
-        log.debug("Creating new pull request: {}", ghPullRequest);
+    private GitHubPullRequest createGitHubPullRequest(GHPullRequest ghPullRequest, List<GHCommit> ghCommits) {
+        log.debug("Creating new pull request '{}' with {} commits", ghPullRequest.getHtmlUrl(), ghCommits.size());
+        addGitCommits(ghCommits, false);
+
         GitHubPullRequest pullRequest = store.create(GitHubPullRequest.class);
         if (ghPullRequest.getMergedAt() != null) {
             pullRequest.setMergedAt(ghPullRequest.getMergedAt().toInstant().atZone(ZoneOffset.UTC));
         }
         try {
-            pullRequest.setBase(findGitCommit(ghPullRequest.getBase().getCommit()));
+            log.debug("Adding '{}' as base to '{}'", ghPullRequest.getBase().getSha(), ghPullRequest.getHtmlUrl());
+            findExistingGitCommit(ghPullRequest.getBase().getCommit()).ifPresent(pullRequest::setBase);
         } catch (IOException e) {
-            log.warn("Cannot retrieve Base Commit '{}' for '{}#{}'",
+            log.warn("Cannot retrieve Base Commit '{}' for '{}'",
                 ghPullRequest.getBase().getRef(),
-                ghPullRequest.getHtmlUrl(),
-                ghPullRequest.getId()
+                ghPullRequest.getHtmlUrl()
             );
         }
-        try {
-            var head = ghPullRequest.getHead();
-            if (null != head) {
-                if (null == head.getRepository()) {
-                    log.warn("Cannot find Head Commit '{}' of '{}#{}'",
-                        head.getRef(),
-                        ghPullRequest.getHtmlUrl(),
-                        ghPullRequest.getId()
-                    );
-                } else {
-                    pullRequest.setHead(findGitCommit(head.getCommit()));
-                }
-            } else {
-                log.warn("Cannot find Head Commit for '{}#{}'",
-                    ghPullRequest.getHtmlUrl(),
-                    ghPullRequest.getId()
-                );
-            }
-        } catch (IOException e) {
-            log.warn("Cannot retrieve Head Commit '{}' for '{}#{}'",
-                ghPullRequest.getHead().getRef(),
+        var head = ghPullRequest.getHead();
+        if (null == head) {
+            log.warn("Cannot find Head Commit for '{}#{}'",
                 ghPullRequest.getHtmlUrl(),
-                ghPullRequest.getId()
+                ghPullRequest.getNumber()
             );
+        } else {
+            if (null == head.getRepository()) {
+                log.warn("Cannot retrieve Head Repository with Commit '{}' of '{}' ({})",
+                    head.getSha(),
+                    ghPullRequest.getHtmlUrl(),
+                    head.getRef()
+                );
+            } else {
+                try {
+                    log.debug("Adding '{}' as head to '{}'", head.getSha(), ghPullRequest.getHtmlUrl());
+                    findExistingGitCommit(head.getCommit()).ifPresent(pullRequest::setHead);
+                } catch (IOException e) {
+                    log.warn("Cannot retrieve Head Commit '{}' for '{}' ({})",
+                        head.getSha(),
+                        ghPullRequest.getHtmlUrl(),
+                        head.getRef()
+
+                    );
+                }
+            }
         }
 
         populateIssueInformation(pullRequest, ghPullRequest);
@@ -216,7 +221,7 @@ public class CacheEndpoint {
         if (optionalGitHubUser.isPresent()) {
             return optionalGitHubUser;
         }
-        return Optional.ofNullable(createGitHubUser(userName, ghUser));
+        return Optional.of(createGitHubUser(userName, ghUser));
     }
 
     private GitHubUser getGitHubUserFromDB(String userName) {
@@ -297,18 +302,18 @@ public class CacheEndpoint {
         return milestone.orElseGet(() -> createGitHubMilestone(gHMilestone));
     }
 
-    public GitTagDescriptor findOrCreateGitHubTag(GHTag ghTag) {
+    public GitTagDescriptor findOrCreateGitHubTag(GHTag ghTag, List<GHCommit> ghCommits) {
         Optional<GitTagDescriptor> tag = descriptorCache.getTag(ghTag.getName());
-        return tag.orElseGet(() -> createGitHubTag(ghTag));
+        return tag.orElseGet(() -> createGitHubTag(ghTag, ghCommits));
     }
 
-    private GitTagDescriptor createGitHubTag(GHTag ghTag) {
-        log.debug("Creating new tag: {}", ghTag);
+    private GitTagDescriptor createGitHubTag(GHTag ghTag, List<GHCommit> ghCommits) {
+        log.debug("Creating new tag: '{}' with commit '{}'", ghTag.getName(), ghTag.getCommit().getSHA1());
+        List<GitCommitDescriptor> commits = addGitCommits(ghCommits, true);
 
         GitTagDescriptor tag = store.create(GitTagDescriptor.class);
         tag.setLabel(ghTag.getName());
-        GitCommitDescriptor commit = findGitCommit(ghTag.getCommit());
-        tag.setCommit(commit);
+        tag.setCommit(commits.get(0));
         descriptorCache.put(tag);
         return tag;
     }
@@ -367,7 +372,21 @@ public class CacheEndpoint {
         return milestone;
     }
 
-    public GitCommitDescriptor findGitCommit(GHCommit ghCommit) {
+    private Optional<GitCommitDescriptor> findExistingGitCommit(GHCommit ghCommit) {
+        var result = descriptorCache.getCommit(ghCommit.getSHA1());
+        if (result.isEmpty()) {
+            var dbResult = getCommitDescriptorFromDB(store, ghCommit.getSHA1());
+            if (null == dbResult) {
+                log.warn("Cannot find (expected) commit '{}'", ghCommit.getSHA1());
+            } else {
+                descriptorCache.put(dbResult);
+                return Optional.of(dbResult);
+            }
+        }
+        return result;
+    }
+
+    private GitCommitDescriptor findOrCreateGitCommit(GHCommit ghCommit) {
         Optional<GitCommitDescriptor> optionalCommit = descriptorCache.getCommit(ghCommit.getSHA1());
         return optionalCommit.orElseGet(() -> createGitCommitDescriptor(ghCommit));
     }
@@ -375,10 +394,10 @@ public class CacheEndpoint {
     private GitCommitDescriptor createGitCommitDescriptor(GHCommit ghCommit) {
         GitCommitDescriptor commit = getCommitDescriptorFromDB(store, ghCommit.getSHA1());
         if (commit == null) {
-            log.debug("Using '{}' from remote repository", ghCommit.getSHA1());
+            log.debug("Adding commit '{}' from remote repository", ghCommit.getSHA1());
             commit = createGitHubCommit(ghCommit);
         } else {
-            log.debug("Found existing commit '{}'", ghCommit.getSHA1());
+            log.debug("Found existing commit '{}' from DB", ghCommit.getSHA1());
         }
         descriptorCache.put(commit);
         return commit;
@@ -415,7 +434,8 @@ public class CacheEndpoint {
 
         try {
             for (GHCommit parent : ghCommit.getParents()) {
-                commit.getParents().add(findGitCommit(parent));
+                log.debug("Adding '{}' as parent to '{}'", parent.getSHA1(), ghCommit.getSHA1());
+                findExistingGitCommit(parent).ifPresent(parentCommit -> commit.getParents().add(parentCommit));
             }
         } catch (IOException e) {
             throw new RuntimeException(e);
@@ -426,13 +446,33 @@ public class CacheEndpoint {
     }
 
     public GitBranchDescriptor findOrCreateGitHubBranch(GHBranch ghBranch, List<GHCommit> ghCommits) {
-        log.debug("Creating new branch: {}", ghBranch.getName());
+        Optional<GitBranchDescriptor> branch = descriptorCache.getBranch(ghBranch.getName());
+        return branch.orElseGet(() -> createGitHubBranch(ghBranch, ghCommits));
+    }
+
+    private GitBranchDescriptor createGitHubBranch(GHBranch ghBranch, List<GHCommit> ghCommits) {
+        log.debug("Creating new branch: '{}' with {} commits", ghBranch.getName(), ghCommits.size());
+        List<GitCommitDescriptor> commits = addGitCommits(ghCommits, true);
+
         GitBranchDescriptor branch = store.create(GitBranchDescriptor.class);
         branch.setName(ghBranch.getName());
-        for (GHCommit ghCommit : ghCommits) {
-            findGitCommit(ghCommit);
-        }
-        branch.setHead(findGitCommit(ghCommits.get(0)));
+        branch.setHead(commits.get(0));
+        descriptorCache.put(branch);
         return branch;
+    }
+
+    private List<GitCommitDescriptor> addGitCommits(List<GHCommit> ghCommits, boolean reverse) {
+        log.debug("Adding {} remote commits to DB and cache", ghCommits.size());
+        List<GitCommitDescriptor> commits = new ArrayList<>(ghCommits.size());
+        if (reverse) {
+            for (int i = ghCommits.size() - 1; i >= 0; i--) {
+                commits.add(findOrCreateGitCommit(ghCommits.get(i)));
+            }
+        } else {
+            for (GHCommit ghCommit : ghCommits) {
+                commits.add(findOrCreateGitCommit(ghCommit));
+            }
+        }
+        return commits;
     }
 }
