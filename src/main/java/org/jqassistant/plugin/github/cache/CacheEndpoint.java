@@ -23,6 +23,7 @@ import org.kohsuke.github.GHRelease;
 import org.kohsuke.github.GHRepository;
 import org.kohsuke.github.GHTag;
 import org.kohsuke.github.GHUser;
+import org.kohsuke.github.GitUser;
 
 import java.io.IOException;
 import java.time.ZoneOffset;
@@ -167,7 +168,7 @@ public class CacheEndpoint {
         try {
             findOrCreateGitHubUser(ghIssue.getUser()).ifPresent(issue::setCreatedBy);
         } catch (IOException e) {
-            throw new RuntimeException(e);
+            log.warn("Cannot resolve creator for issue #{}: {}", ghIssue.getNumber(), e.getMessage());
         }
         try {
             issue.setUpdatedAt(ghIssue.getUpdatedAt().toInstant().atZone(ZoneOffset.UTC));
@@ -185,14 +186,14 @@ public class CacheEndpoint {
                 findOrCreateGitHubUser(ghIssue.getClosedBy()).ifPresent(issue::setClosedBy);
             }
         } catch (IOException e) {
-            throw new RuntimeException(e);
+            log.warn("Cannot resolve closedBy user for issue #{}: {}", ghIssue.getNumber(), e.getMessage());
         }
         for (GHUser assignee : ghIssue.getAssignees()) {
             try {
                 Optional<GitHubUser> user = findOrCreateGitHubUser(assignee);
                 user.ifPresent(gitHubUser -> issue.getAssignees().add(gitHubUser));
             } catch (IOException e) {
-                throw new RuntimeException(e);
+                log.warn("Cannot resolve assignee for issue #{}: {}", ghIssue.getNumber(), e.getMessage());
             }
         }
         for (GHLabel label : ghIssue.getLabels()) {
@@ -265,6 +266,34 @@ public class CacheEndpoint {
         descriptorCache.put(gitHubUser);
 
         return gitHubUser;
+    }
+
+    /**
+     * Create or retrieve a placeholder {@link GitHubUser} from git-level commit info
+     * (name/email) when the GitHub user API returns 404 for deleted or virtual users.
+     * Uses email as the cache key (falls back to name if email is unavailable).
+     */
+    private Optional<GitHubUser> findOrCreatePlaceholderUser(String email, String name) {
+        String key = email != null ? email : name;
+        if (key == null) {
+            return Optional.empty();
+        }
+        Optional<GitHubUser> cached = descriptorCache.getUser(key);
+        if (cached.isPresent()) {
+            return cached;
+        }
+        GitHubUser gitHubUser = getGitHubUserFromDB(key);
+        if (gitHubUser != null) {
+            descriptorCache.put(gitHubUser);
+            return Optional.of(gitHubUser);
+        }
+        log.debug("Creating placeholder GitHub user: '{}' ({} <{}>)", key, name, email);
+        gitHubUser = store.create(GitHubUser.class);
+        gitHubUser.setUsername(key);
+        gitHubUser.setName(name);
+        gitHubUser.setEmail(email);
+        descriptorCache.put(gitHubUser);
+        return Optional.of(gitHubUser);
     }
 
     /**
@@ -364,7 +393,7 @@ public class CacheEndpoint {
                 findOrCreateGitHubUser(ghMilestone.getCreator()).ifPresent(milestone::setCreatedBy);
             }
         } catch (IOException e) {
-            throw new RuntimeException(e);
+            log.warn("Cannot resolve creator for milestone #{}: {}", ghMilestone.getNumber(), e.getMessage());
         }
 
         descriptorCache.put(milestone);
@@ -416,14 +445,32 @@ public class CacheEndpoint {
                 findOrCreateGitHubUser(ghCommit.getAuthor()).ifPresent(user -> commit.setAuthor(user.getName()));
             }
         } catch (IOException e) {
-            throw new RuntimeException(e);
+            log.warn("Cannot resolve GitHub author for commit '{}', falling back to git info: {}", ghCommit.getSHA1(), e.getMessage());
+            try {
+                GitUser gitAuthor = ghCommit.getCommitShortInfo().getAuthor();
+                if (gitAuthor != null) {
+                    findOrCreatePlaceholderUser(gitAuthor.getEmail(), gitAuthor.getName())
+                        .ifPresent(user -> commit.setAuthor(user.getName()));
+                }
+            } catch (IOException e2) {
+                log.warn("Cannot resolve git author info for commit '{}': {}", ghCommit.getSHA1(), e2.getMessage());
+            }
         }
         try {
             if (ghCommit.getCommitter() != null) {
                 findOrCreateGitHubUser(ghCommit.getCommitter()).ifPresent(user -> commit.setCommitter(user.getName()));
             }
         } catch (IOException e) {
-            throw new RuntimeException(e);
+            log.warn("Cannot resolve GitHub committer for commit '{}', falling back to git info: {}", ghCommit.getSHA1(), e.getMessage());
+            try {
+                GitUser gitCommitter = ghCommit.getCommitShortInfo().getCommitter();
+                if (gitCommitter != null) {
+                    findOrCreatePlaceholderUser(gitCommitter.getEmail(), gitCommitter.getName())
+                        .ifPresent(user -> commit.setCommitter(user.getName()));
+                }
+            } catch (IOException e2) {
+                log.warn("Cannot resolve git committer info for commit '{}': {}", ghCommit.getSHA1(), e2.getMessage());
+            }
         }
         try {
             commit.setDate(ghCommit.getCommitDate().toString());
