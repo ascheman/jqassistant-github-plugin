@@ -13,6 +13,11 @@ import org.jqassistant.plugin.github.model.GitHubPullRequest;
 import org.jqassistant.plugin.github.model.GitHubRelease;
 import org.jqassistant.plugin.github.model.GitHubRepository;
 import org.jqassistant.plugin.github.model.GitHubUser;
+import org.jqassistant.plugin.github.cache.file.dto.CachedBranch;
+import org.jqassistant.plugin.github.cache.file.dto.CachedCommit;
+import org.jqassistant.plugin.github.cache.file.dto.CachedRelease;
+import org.jqassistant.plugin.github.cache.file.dto.CachedTag;
+import org.jqassistant.plugin.github.cache.file.dto.CachedUser;
 import org.kohsuke.github.GHBranch;
 import org.kohsuke.github.GHCommit;
 import org.kohsuke.github.GHIssue;
@@ -521,5 +526,170 @@ public class CacheEndpoint {
             }
         }
         return commits;
+    }
+
+    // --- Cache DTO-based methods (Phase 1: file cache support) ---
+
+    /**
+     * Create or retrieve a commit descriptor from a cached DTO.
+     */
+    public GitCommitDescriptor findOrCreateCommitFromCache(CachedCommit cached) {
+        Optional<GitCommitDescriptor> existing = descriptorCache.getCommit(cached.getSha());
+        if (existing.isPresent()) {
+            return existing.get();
+        }
+        GitCommitDescriptor fromDb = getCommitDescriptorFromDB(store, cached.getSha());
+        if (fromDb != null) {
+            descriptorCache.put(fromDb);
+            return fromDb;
+        }
+        return createCommitFromCache(cached);
+    }
+
+    private GitCommitDescriptor createCommitFromCache(CachedCommit cached) {
+        log.debug("Creating commit '{}' from file cache", cached.getSha());
+        GitCommitDescriptor commit = store.create(GitCommitDescriptor.class);
+        commit.setSha(cached.getSha());
+        commit.setDate(cached.getDate());
+
+        // Resolve author
+        if (cached.getAuthorLogin() != null) {
+            resolveUserFromCache(cached.getAuthorLogin(), cached.getAuthorName(), cached.getAuthorEmail())
+                .ifPresent(user -> commit.setAuthor(user.getName()));
+        } else if (cached.getAuthorEmail() != null || cached.getAuthorName() != null) {
+            findOrCreatePlaceholderUser(cached.getAuthorEmail(), cached.getAuthorName())
+                .ifPresent(user -> commit.setAuthor(user.getName()));
+        }
+
+        // Resolve committer
+        if (cached.getCommitterLogin() != null) {
+            resolveUserFromCache(cached.getCommitterLogin(), cached.getCommitterName(), cached.getCommitterEmail())
+                .ifPresent(user -> commit.setCommitter(user.getName()));
+        } else if (cached.getCommitterEmail() != null || cached.getCommitterName() != null) {
+            findOrCreatePlaceholderUser(cached.getCommitterEmail(), cached.getCommitterName())
+                .ifPresent(user -> commit.setCommitter(user.getName()));
+        }
+
+        // Resolve parents
+        if (cached.getParentShas() != null) {
+            for (String parentSha : cached.getParentShas()) {
+                descriptorCache.getCommit(parentSha)
+                    .or(() -> {
+                        GitCommitDescriptor fromDb = getCommitDescriptorFromDB(store, parentSha);
+                        if (fromDb != null) {
+                            descriptorCache.put(fromDb);
+                        }
+                        return Optional.ofNullable(fromDb);
+                    })
+                    .ifPresent(parent -> commit.getParents().add(parent));
+            }
+        }
+
+        descriptorCache.put(commit);
+        return commit;
+    }
+
+    /**
+     * Resolve a user by login/name/email, creating from cache info if needed.
+     */
+    private Optional<GitHubUser> resolveUserFromCache(String login, String name, String email) {
+        if (login == null) {
+            return Optional.empty();
+        }
+        Optional<GitHubUser> cached = descriptorCache.getUser(login);
+        if (cached.isPresent()) {
+            return cached;
+        }
+        GitHubUser fromDb = getGitHubUserFromDB(login);
+        if (fromDb != null) {
+            descriptorCache.put(fromDb);
+            return Optional.of(fromDb);
+        }
+        log.debug("Creating user '{}' from file cache info", login);
+        GitHubUser user = store.create(GitHubUser.class);
+        user.setUsername(login);
+        user.setName(name);
+        user.setEmail(email);
+        descriptorCache.put(user);
+        return Optional.of(user);
+    }
+
+    /**
+     * Create or retrieve a user descriptor from a cached DTO.
+     */
+    public Optional<GitHubUser> findOrCreateUserFromCache(CachedUser cachedUser) {
+        if (cachedUser == null || cachedUser.getLogin() == null) {
+            return Optional.empty();
+        }
+        return resolveUserFromCache(cachedUser.getLogin(), cachedUser.getName(), cachedUser.getEmail());
+    }
+
+    /**
+     * Create a branch descriptor from cached data, loading commits from cache DTOs.
+     */
+    public GitBranchDescriptor findOrCreateBranchFromCache(CachedBranch cachedBranch, List<CachedCommit> cachedCommits) {
+        Optional<GitBranchDescriptor> existing = descriptorCache.getBranch(cachedBranch.getName());
+        if (existing.isPresent()) {
+            return existing.get();
+        }
+        log.debug("Creating branch '{}' from file cache with {} commits", cachedBranch.getName(), cachedCommits.size());
+
+        // Add commits in reverse order (oldest first) like the original code
+        List<GitCommitDescriptor> commits = new ArrayList<>(cachedCommits.size());
+        for (int i = cachedCommits.size() - 1; i >= 0; i--) {
+            commits.add(findOrCreateCommitFromCache(cachedCommits.get(i)));
+        }
+
+        GitBranchDescriptor branch = store.create(GitBranchDescriptor.class);
+        branch.setName(cachedBranch.getName());
+        if (!commits.isEmpty()) {
+            branch.setHead(commits.get(0));
+        }
+        descriptorCache.put(branch);
+        return branch;
+    }
+
+    /**
+     * Create a tag descriptor from cached data, loading commits from cache DTOs.
+     */
+    public GitTagDescriptor findOrCreateTagFromCache(CachedTag cachedTag, List<CachedCommit> cachedCommits) {
+        Optional<GitTagDescriptor> existing = descriptorCache.getTag(cachedTag.getName());
+        if (existing.isPresent()) {
+            return existing.get();
+        }
+        log.debug("Creating tag '{}' from file cache with {} commits", cachedTag.getName(), cachedCommits.size());
+
+        // Add commits in reverse order (oldest first) like the original code
+        List<GitCommitDescriptor> commits = new ArrayList<>(cachedCommits.size());
+        for (int i = cachedCommits.size() - 1; i >= 0; i--) {
+            commits.add(findOrCreateCommitFromCache(cachedCommits.get(i)));
+        }
+
+        GitTagDescriptor tag = store.create(GitTagDescriptor.class);
+        tag.setLabel(cachedTag.getName());
+        if (!commits.isEmpty()) {
+            tag.setCommit(commits.get(0));
+        }
+        descriptorCache.put(tag);
+        return tag;
+    }
+
+    /**
+     * Create a release descriptor from cached data.
+     */
+    public GitHubRelease findOrCreateReleaseFromCache(CachedRelease cachedRelease) {
+        Optional<GitHubRelease> existing = descriptorCache.getRelease(cachedRelease.getName());
+        if (existing.isPresent()) {
+            return existing.get();
+        }
+        log.debug("Creating release '{}' from file cache", cachedRelease.getName());
+        GitHubRelease release = store.create(GitHubRelease.class);
+        release.setName(cachedRelease.getName());
+        release.setBody(cachedRelease.getBody());
+        if (cachedRelease.getTagName() != null) {
+            descriptorCache.getTag(cachedRelease.getTagName()).ifPresent(release::setTag);
+        }
+        descriptorCache.put(release);
+        return release;
     }
 }
