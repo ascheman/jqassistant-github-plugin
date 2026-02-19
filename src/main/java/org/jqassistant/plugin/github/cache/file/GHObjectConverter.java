@@ -146,4 +146,175 @@ public final class GHObjectConverter {
             .color(ghLabel.getColor())
             .build();
     }
+
+    public static CachedIssue toIssue(GHIssue ghIssue) {
+        CachedIssue.CachedIssueBuilder builder = CachedIssue.builder()
+            .number(ghIssue.getNumber())
+            .title(ghIssue.getTitle())
+            .body(ghIssue.getBody())
+            .state(ghIssue.getState().name())
+            .locked(ghIssue.isLocked())
+            .pullRequest(ghIssue.isPullRequest());
+
+        try {
+            if (ghIssue.getCreatedAt() != null) {
+                builder.createdAt(ghIssue.getCreatedAt().toInstant().toString());
+            }
+        } catch (IOException e) {
+            log.debug("Cannot get createdAt for issue #{}: {}", ghIssue.getNumber(), e.getMessage());
+        }
+        try {
+            if (ghIssue.getUpdatedAt() != null) {
+                builder.updatedAt(ghIssue.getUpdatedAt().toInstant().toString());
+            }
+        } catch (IOException e) {
+            log.debug("Cannot get updatedAt for issue #{}: {}", ghIssue.getNumber(), e.getMessage());
+        }
+        if (ghIssue.getClosedAt() != null) {
+            builder.closedAt(ghIssue.getClosedAt().toInstant().toString());
+        }
+
+        try {
+            if (ghIssue.getUser() != null && ghIssue.getUser().getLogin() != null) {
+                builder.createdByLogin(ghIssue.getUser().getLogin());
+            }
+        } catch (IOException e) {
+            log.debug("Cannot get creator for issue #{}: {}", ghIssue.getNumber(), e.getMessage());
+        }
+        try {
+            if (ghIssue.getClosedBy() != null && ghIssue.getClosedBy().getLogin() != null) {
+                builder.closedByLogin(ghIssue.getClosedBy().getLogin());
+            }
+        } catch (IOException e) {
+            log.debug("Cannot get closedBy for issue #{}: {}", ghIssue.getNumber(), e.getMessage());
+        }
+
+        List<String> assigneeLogins = new ArrayList<>();
+        for (GHUser assignee : ghIssue.getAssignees()) {
+            if (assignee.getLogin() != null) {
+                assigneeLogins.add(assignee.getLogin());
+            }
+        }
+        builder.assigneeLogins(assigneeLogins);
+
+        List<String> labelNames = new ArrayList<>();
+        for (GHLabel label : ghIssue.getLabels()) {
+            labelNames.add(label.getName());
+        }
+        builder.labelNames(labelNames);
+
+        if (ghIssue.getMilestone() != null) {
+            builder.milestoneNumber(ghIssue.getMilestone().getNumber());
+        }
+
+        return builder.build();
+    }
+
+    public static CachedPullRequest toPullRequest(GHPullRequest ghPr, List<GHCommit> ghCommits) {
+        CachedPullRequest pr = new CachedPullRequest();
+        // Populate base issue fields
+        pr.setNumber(ghPr.getNumber());
+        pr.setTitle(ghPr.getTitle());
+        pr.setBody(ghPr.getBody());
+        pr.setState(ghPr.getState().name());
+        pr.setLocked(ghPr.isLocked());
+        pr.setPullRequest(true);
+
+        try {
+            if (ghPr.getCreatedAt() != null) {
+                pr.setCreatedAt(ghPr.getCreatedAt().toInstant().toString());
+            }
+        } catch (IOException e) {
+            log.debug("Cannot get createdAt for PR #{}: {}", ghPr.getNumber(), e.getMessage());
+        }
+        try {
+            if (ghPr.getUpdatedAt() != null) {
+                pr.setUpdatedAt(ghPr.getUpdatedAt().toInstant().toString());
+            }
+        } catch (IOException e) {
+            log.debug("Cannot get updatedAt for PR #{}: {}", ghPr.getNumber(), e.getMessage());
+        }
+        if (ghPr.getClosedAt() != null) {
+            pr.setClosedAt(ghPr.getClosedAt().toInstant().toString());
+        }
+        if (ghPr.getMergedAt() != null) {
+            pr.setMergedAt(ghPr.getMergedAt().toInstant().toString());
+        }
+
+        try {
+            if (ghPr.getUser() != null) {
+                pr.setCreatedByLogin(ghPr.getUser().getLogin());
+            }
+        } catch (IOException e) { /* ignore */ }
+        if (ghPr.getClosedBy() != null) {
+            pr.setClosedByLogin(ghPr.getClosedBy().getLogin());
+        }
+
+        List<String> assigneeLogins = new ArrayList<>();
+        for (GHUser a : ghPr.getAssignees()) {
+            if (a.getLogin() != null) assigneeLogins.add(a.getLogin());
+        }
+        pr.setAssigneeLogins(assigneeLogins);
+
+        List<String> labelNames = new ArrayList<>();
+        for (GHLabel l : ghPr.getLabels()) {
+            labelNames.add(l.getName());
+        }
+        pr.setLabelNames(labelNames);
+
+        if (ghPr.getMilestone() != null) {
+            pr.setMilestoneNumber(ghPr.getMilestone().getNumber());
+        }
+
+        // PR-specific fields
+        if (ghPr.getBase() != null) {
+            pr.setBaseSha(ghPr.getBase().getSha());
+        }
+        if (ghPr.getHead() != null) {
+            pr.setHeadSha(ghPr.getHead().getSha());
+        }
+
+        List<String> commitShas = new ArrayList<>(ghCommits.size());
+        for (GHCommit c : ghCommits) {
+            commitShas.add(c.getSHA1());
+        }
+        pr.setCommitShas(commitShas);
+
+        return pr;
+    }
+
+    public static CachedMilestone toMilestone(GHMilestone ghMilestone) {
+        CachedMilestone.CachedMilestoneBuilder builder = CachedMilestone.builder()
+            .number(ghMilestone.getNumber())
+            .title(ghMilestone.getTitle())
+            .description(ghMilestone.getDescription())
+            .state(ghMilestone.getState().name());
+
+        try {
+            if (ghMilestone.getCreatedAt() != null) {
+                builder.createdAt(ghMilestone.getCreatedAt().toInstant().toString());
+            }
+        } catch (IOException e) {
+            log.debug("Cannot get createdAt for milestone #{}: {}", ghMilestone.getNumber(), e.getMessage());
+        }
+        try {
+            if (ghMilestone.getUpdatedAt() != null) {
+                builder.updatedAt(ghMilestone.getUpdatedAt().toInstant().toString());
+            }
+        } catch (IOException e) {
+            log.debug("Cannot get updatedAt for milestone #{}: {}", ghMilestone.getNumber(), e.getMessage());
+        }
+        if (ghMilestone.getDueOn() != null) {
+            builder.dueOn(ghMilestone.getDueOn().toInstant().toString());
+        }
+        try {
+            if (ghMilestone.getCreator() != null) {
+                builder.creatorLogin(ghMilestone.getCreator().getLogin());
+            }
+        } catch (IOException e) {
+            log.debug("Cannot get creator for milestone #{}: {}", ghMilestone.getNumber(), e.getMessage());
+        }
+
+        return builder.build();
+    }
 }

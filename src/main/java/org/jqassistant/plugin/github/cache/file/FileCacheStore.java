@@ -13,7 +13,10 @@ import java.nio.file.StandardCopyOption;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
+import java.util.stream.Stream;
 
 /**
  * File-based cache store for GitHub API responses.
@@ -143,6 +146,60 @@ public class FileCacheStore {
         writeJson(labelPath(label.getName()), label);
     }
 
+    // --- Issue operations ---
+
+    private Path issuePath(int number) {
+        return repoDir().resolve("issues").resolve(number + ".json");
+    }
+
+    public Optional<CachedIssue> readIssue(int number) {
+        return readJson(issuePath(number), CachedIssue.class);
+    }
+
+    public void writeIssue(CachedIssue issue) {
+        writeJson(issuePath(issue.getNumber()), issue);
+    }
+
+    public List<CachedIssue> readAllIssues() {
+        return readAllFromDir(repoDir().resolve("issues"), CachedIssue.class);
+    }
+
+    // --- Pull request operations ---
+
+    private Path pullRequestPath(int number) {
+        return repoDir().resolve("pulls").resolve(number + ".json");
+    }
+
+    public Optional<CachedPullRequest> readPullRequest(int number) {
+        return readJson(pullRequestPath(number), CachedPullRequest.class);
+    }
+
+    public void writePullRequest(CachedPullRequest pr) {
+        writeJson(pullRequestPath(pr.getNumber()), pr);
+    }
+
+    public List<CachedPullRequest> readAllPullRequests() {
+        return readAllFromDir(repoDir().resolve("pulls"), CachedPullRequest.class);
+    }
+
+    // --- Milestone operations ---
+
+    private Path milestonePath(int number) {
+        return repoDir().resolve("milestones").resolve(number + ".json");
+    }
+
+    public Optional<CachedMilestone> readMilestone(int number) {
+        return readJson(milestonePath(number), CachedMilestone.class);
+    }
+
+    public void writeMilestone(CachedMilestone milestone) {
+        writeJson(milestonePath(milestone.getNumber()), milestone);
+    }
+
+    public List<CachedMilestone> readAllMilestones() {
+        return readAllFromDir(repoDir().resolve("milestones"), CachedMilestone.class);
+    }
+
     // --- Scan metadata ---
 
     private Path metadataPath() {
@@ -186,6 +243,29 @@ public class FileCacheStore {
         } catch (IOException e) {
             log.warn("Failed to write cache file '{}': {}", path, e.getMessage());
         }
+    }
+
+    /**
+     * Read all JSON files from a directory into a list of the given type.
+     */
+    private <T> List<T> readAllFromDir(Path dir, Class<T> type) {
+        List<T> result = new ArrayList<>();
+        if (!Files.isDirectory(dir)) {
+            return result;
+        }
+        try (Stream<Path> files = Files.list(dir)) {
+            files.filter(p -> p.toString().endsWith(".json"))
+                .forEach(p -> {
+                    try {
+                        result.add(MAPPER.readValue(p.toFile(), type));
+                    } catch (IOException e) {
+                        log.warn("Failed to read cache file '{}': {}", p, e.getMessage());
+                    }
+                });
+        } catch (IOException e) {
+            log.warn("Failed to list cache directory '{}': {}", dir, e.getMessage());
+        }
+        return result;
     }
 
     /**

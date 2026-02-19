@@ -11,6 +11,9 @@ import org.jqassistant.plugin.github.cache.file.FileCacheStore;
 import org.jqassistant.plugin.github.cache.file.GHObjectConverter;
 import org.jqassistant.plugin.github.cache.file.dto.CachedBranch;
 import org.jqassistant.plugin.github.cache.file.dto.CachedCommit;
+import org.jqassistant.plugin.github.cache.file.dto.CachedIssue;
+import org.jqassistant.plugin.github.cache.file.dto.CachedMilestone;
+import org.jqassistant.plugin.github.cache.file.dto.CachedPullRequest;
 import org.jqassistant.plugin.github.cache.file.dto.CachedRelease;
 import org.jqassistant.plugin.github.cache.file.dto.CachedTag;
 import org.jqassistant.plugin.github.cache.file.dto.CachedUser;
@@ -32,9 +35,12 @@ import org.kohsuke.github.GHTag;
 import org.kohsuke.github.GitHub;
 
 import java.io.IOException;
+import java.time.ZonedDateTime;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -67,9 +73,9 @@ class GraphBuilder {
         ScanMetadata metadata = fileCacheStore != null ? fileCacheStore.readMetadata() : null;
 
         importBranches(ghRepository, gitHubRepository, metadata);
-        importPullRequests(ghRepository, gitHubRepository);
         importMilestones(ghRepository, gitHubRepository);
-        importIssues(ghRepository, gitHubRepository);
+        importPullRequests(ghRepository, gitHubRepository, metadata);
+        importIssues(ghRepository, gitHubRepository, metadata);
         importTags(ghRepository, gitHubRepository, metadata);
         importReleases(ghRepository, gitHubRepository);
 
@@ -141,45 +147,126 @@ class GraphBuilder {
         log.info("Imported {} branches", branches.size());
     }
 
-    private void importPullRequests(GHRepository repository, GitHubRepository gitHubRepository) {
+    private void importPullRequests(GHRepository repository, GitHubRepository gitHubRepository, ScanMetadata metadata) {
         List<GitHubPullRequest> pullRequests = new LinkedList<>();
-        for (GHPullRequest ghPullRequest : repository.queryPullRequests().state(GHIssueState.ALL).list()) {
-            log.debug("Found pull request: {}", ghPullRequest.getNumber());
-            List<GHCommit> ghCommits = new LinkedList<>();
-            // Retrieve all commits that belong to this PR
-            ghPullRequest.listCommits().forEach(commitDetail -> {
-                try {
-                    String sha = commitDetail.getSha();
-                    // Check file cache first for the commit
-                    if (fileCacheStore != null && fileCacheStore.hasCommit(sha)) {
-                        log.debug("PR #{} commit '{}' already cached, loading from file cache", ghPullRequest.getNumber(), sha.substring(0, 7));
-                    }
-                    // Still need the GHCommit for the existing PR flow
-                    ghCommits.add(repository.getCommit(sha));
-                } catch (IOException e) {
-                    log.warn("Cannot retrieve remote commit '{}' for PullRequest #{}", commitDetail.getSha(), ghPullRequest.getNumber());
-                }
-            });
 
-            // Cache commits and users from PR
-            if (fileCacheStore != null) {
-                cacheCommitsAndUsers(ghCommits);
+        if (fileCacheStore != null) {
+            // Load all cached PRs, keyed by number
+            Map<Integer, CachedPullRequest> cachedPrMap = new HashMap<>();
+            for (CachedPullRequest cached : fileCacheStore.readAllPullRequests()) {
+                cachedPrMap.put(cached.getNumber(), cached);
             }
 
-            pullRequests.add(cacheEndpoint.findOrCreatePullRequest(ghPullRequest, ghCommits));
+            int fromCache = 0;
+            int fromApi = 0;
+
+            for (GHPullRequest ghPr : repository.queryPullRequests().state(GHIssueState.ALL).list()) {
+                int number = ghPr.getNumber();
+                log.debug("Found pull request: {}", number);
+
+                CachedPullRequest cachedPr = cachedPrMap.remove(number);
+
+                // Closed/merged PRs are immutable — use cache if available
+                if (cachedPr != null && !"OPEN".equalsIgnoreCase(ghPr.getState().name())) {
+                    log.debug("PR #{} is closed/merged, loading from cache", number);
+                    pullRequests.add(cacheEndpoint.findOrCreatePullRequestFromCache(cachedPr));
+                    fromCache++;
+                    continue;
+                }
+
+                // Open PR or not cached: fetch from API
+                List<GHCommit> ghCommits = new LinkedList<>();
+                ghPr.listCommits().forEach(commitDetail -> {
+                    try {
+                        String sha = commitDetail.getSha();
+                        ghCommits.add(repository.getCommit(sha));
+                    } catch (IOException e) {
+                        log.warn("Cannot retrieve remote commit '{}' for PullRequest #{}", commitDetail.getSha(), number);
+                    }
+                });
+
+                cacheCommitsAndUsers(ghCommits);
+
+                // Cache the PR
+                CachedPullRequest newCachedPr = GHObjectConverter.toPullRequest(ghPr, ghCommits);
+                fileCacheStore.writePullRequest(newCachedPr);
+
+                pullRequests.add(cacheEndpoint.findOrCreatePullRequest(ghPr, ghCommits));
+                fromApi++;
+            }
+
+            // Load remaining cached PRs that weren't returned by the API listing
+            // (this shouldn't normally happen, but handles edge cases)
+            for (CachedPullRequest remaining : cachedPrMap.values()) {
+                log.debug("PR #{} only in cache (not returned by API), loading from cache", remaining.getNumber());
+                pullRequests.add(cacheEndpoint.findOrCreatePullRequestFromCache(remaining));
+                fromCache++;
+            }
+
+            log.info("Imported {} pull requests ({} from cache, {} from API)", pullRequests.size(), fromCache, fromApi);
+        } else {
+            // No cache — original behavior
+            for (GHPullRequest ghPullRequest : repository.queryPullRequests().state(GHIssueState.ALL).list()) {
+                log.debug("Found pull request: {}", ghPullRequest.getNumber());
+                List<GHCommit> ghCommits = new LinkedList<>();
+                ghPullRequest.listCommits().forEach(commitDetail -> {
+                    try {
+                        ghCommits.add(repository.getCommit(commitDetail.getSha()));
+                    } catch (IOException e) {
+                        log.warn("Cannot retrieve remote commit '{}' for PullRequest #{}", commitDetail.getSha(), ghPullRequest.getNumber());
+                    }
+                });
+                pullRequests.add(cacheEndpoint.findOrCreatePullRequest(ghPullRequest, ghCommits));
+            }
+            log.info("Imported {} pull requests", pullRequests.size());
         }
         gitHubRepository.getPullRequests().addAll(pullRequests);
-        log.info("Imported {} pull requests", pullRequests.size());
     }
 
     private void importMilestones(GHRepository repository, GitHubRepository gitHubRepository) {
         List<GitHubMilestone> milestones = new LinkedList<>();
-        for (GHMilestone milestone : repository.listMilestones(GHIssueState.ALL)) {
-            log.debug("Found milestone: {}", milestone.getNumber());
-            milestones.add(cacheEndpoint.findOrCreateGitHubMilestone(milestone));
+
+        if (fileCacheStore != null) {
+            // Load all cached milestones
+            Map<Integer, CachedMilestone> cachedMilestoneMap = new HashMap<>();
+            for (CachedMilestone cached : fileCacheStore.readAllMilestones()) {
+                cachedMilestoneMap.put(cached.getNumber(), cached);
+            }
+
+            int fromCache = 0;
+            int fromApi = 0;
+
+            for (GHMilestone ghMilestone : repository.listMilestones(GHIssueState.ALL)) {
+                int number = ghMilestone.getNumber();
+                log.debug("Found milestone: {}", number);
+
+                CachedMilestone cachedMilestone = cachedMilestoneMap.remove(number);
+
+                // Closed milestones are immutable — use cache if available
+                if (cachedMilestone != null && "CLOSED".equalsIgnoreCase(ghMilestone.getState().name())) {
+                    log.debug("Milestone #{} is closed, loading from cache", number);
+                    milestones.add(cacheEndpoint.findOrCreateMilestoneFromCache(cachedMilestone));
+                    fromCache++;
+                    continue;
+                }
+
+                // Open or not cached: fetch from API and cache
+                CachedMilestone newCachedMilestone = GHObjectConverter.toMilestone(ghMilestone);
+                fileCacheStore.writeMilestone(newCachedMilestone);
+
+                milestones.add(cacheEndpoint.findOrCreateGitHubMilestone(ghMilestone));
+                fromApi++;
+            }
+
+            log.info("Imported {} milestones ({} from cache, {} from API)", milestones.size(), fromCache, fromApi);
+        } else {
+            for (GHMilestone milestone : repository.listMilestones(GHIssueState.ALL)) {
+                log.debug("Found milestone: {}", milestone.getNumber());
+                milestones.add(cacheEndpoint.findOrCreateGitHubMilestone(milestone));
+            }
+            log.info("Imported {} milestones", milestones.size());
         }
         gitHubRepository.getMilestones().addAll(milestones);
-        log.info("Imported {} milestones", milestones.size());
     }
 
     private void importReleases(GHRepository repository, GitHubRepository gitHubRepository) {
@@ -260,17 +347,64 @@ class GraphBuilder {
         }
     }
 
-    private void importIssues(GHRepository repository, GitHubRepository gitHubRepository) {
+    private void importIssues(GHRepository repository, GitHubRepository gitHubRepository, ScanMetadata metadata) {
         List<GitHubIssue> issues = new LinkedList<>();
-        for (GHIssue issue : repository.queryIssues().state(GHIssueState.ALL).list()) {
-            log.debug("Found issue: {}", issue.getNumber());
-            issues.add(cacheEndpoint.findOrCreateGitHubIssue(issue));
-            if (issue.isPullRequest()) {
-                log.debug("Issue {} already imported as Pull Request", issue.getNumber());
+
+        if (fileCacheStore != null && metadata != null) {
+            // Load all cached issues, keyed by number
+            Map<Integer, CachedIssue> cachedIssueMap = new HashMap<>();
+            for (CachedIssue cached : fileCacheStore.readAllIssues()) {
+                cachedIssueMap.put(cached.getNumber(), cached);
             }
+
+            // Fetch only issues updated since last scan (or all if no previous scan)
+            var queryBuilder = repository.queryIssues().state(GHIssueState.ALL);
+            if (metadata.getLastScanAt() != null) {
+                ZonedDateTime lastScan = ZonedDateTime.parse(metadata.getLastScanAt());
+                queryBuilder.since(java.util.Date.from(lastScan.toInstant()));
+                log.info("Fetching issues updated since {}", metadata.getLastScanAt());
+            }
+
+            int fromCache = 0;
+            int fromApi = 0;
+
+            // Process updated issues from API
+            for (GHIssue ghIssue : queryBuilder.list()) {
+                int number = ghIssue.getNumber();
+                log.debug("Found updated issue: {}", number);
+                cachedIssueMap.remove(number);
+
+                // Cache the issue
+                CachedIssue cachedIssue = GHObjectConverter.toIssue(ghIssue);
+                fileCacheStore.writeIssue(cachedIssue);
+
+                issues.add(cacheEndpoint.findOrCreateGitHubIssue(ghIssue));
+                if (ghIssue.isPullRequest()) {
+                    log.debug("Issue {} already imported as Pull Request", number);
+                }
+                fromApi++;
+            }
+
+            // Load remaining cached issues that were not updated
+            for (CachedIssue cached : cachedIssueMap.values()) {
+                log.debug("Issue #{} unchanged, loading from cache", cached.getNumber());
+                issues.add(cacheEndpoint.findOrCreateIssueFromCache(cached));
+                fromCache++;
+            }
+
+            log.info("Imported {} issues ({} from cache, {} from API)", issues.size(), fromCache, fromApi);
+        } else {
+            // No cache — original behavior
+            for (GHIssue issue : repository.queryIssues().state(GHIssueState.ALL).list()) {
+                log.debug("Found issue: {}", issue.getNumber());
+                issues.add(cacheEndpoint.findOrCreateGitHubIssue(issue));
+                if (issue.isPullRequest()) {
+                    log.debug("Issue {} already imported as Pull Request", issue.getNumber());
+                }
+            }
+            log.info("Imported {} issues", issues.size());
         }
         gitHubRepository.getIssues().addAll(issues);
-        log.info("Imported {} issues", issues.size());
     }
 
     // --- File cache helpers ---

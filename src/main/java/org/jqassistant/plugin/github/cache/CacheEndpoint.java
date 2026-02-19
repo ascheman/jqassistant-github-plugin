@@ -15,6 +15,9 @@ import org.jqassistant.plugin.github.model.GitHubRepository;
 import org.jqassistant.plugin.github.model.GitHubUser;
 import org.jqassistant.plugin.github.cache.file.dto.CachedBranch;
 import org.jqassistant.plugin.github.cache.file.dto.CachedCommit;
+import org.jqassistant.plugin.github.cache.file.dto.CachedIssue;
+import org.jqassistant.plugin.github.cache.file.dto.CachedMilestone;
+import org.jqassistant.plugin.github.cache.file.dto.CachedPullRequest;
 import org.jqassistant.plugin.github.cache.file.dto.CachedRelease;
 import org.jqassistant.plugin.github.cache.file.dto.CachedTag;
 import org.jqassistant.plugin.github.cache.file.dto.CachedUser;
@@ -32,6 +35,7 @@ import org.kohsuke.github.GitUser;
 
 import java.io.IOException;
 import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -691,5 +695,166 @@ public class CacheEndpoint {
         }
         descriptorCache.put(release);
         return release;
+    }
+
+    // --- Phase 2: Cache DTO-based methods for issues, PRs, milestones ---
+
+    /**
+     * Create or retrieve an issue descriptor from a cached DTO.
+     */
+    public GitHubIssue findOrCreateIssueFromCache(CachedIssue cached) {
+        Optional<GitHubIssue> existing = descriptorCache.getIssue(cached.getNumber());
+        if (existing.isPresent()) {
+            return existing.get();
+        }
+        log.debug("Creating issue #{} from file cache", cached.getNumber());
+        GitHubIssue issue = store.create(GitHubIssue.class);
+        populateIssueFromCache(issue, cached);
+        descriptorCache.put(issue);
+        return issue;
+    }
+
+    /**
+     * Create or retrieve a pull request descriptor from a cached DTO.
+     */
+    public GitHubPullRequest findOrCreatePullRequestFromCache(CachedPullRequest cached) {
+        Optional<GitHubPullRequest> existing = descriptorCache.getPullRequest(cached.getNumber());
+        if (existing.isPresent()) {
+            return existing.get();
+        }
+        log.debug("Creating PR #{} from file cache", cached.getNumber());
+        GitHubPullRequest pr = store.create(GitHubPullRequest.class);
+        populateIssueFromCache(pr, cached);
+
+        if (cached.getMergedAt() != null) {
+            pr.setMergedAt(ZonedDateTime.parse(cached.getMergedAt()));
+        }
+        if (cached.getBaseSha() != null) {
+            descriptorCache.getCommit(cached.getBaseSha())
+                .or(() -> {
+                    GitCommitDescriptor fromDb = getCommitDescriptorFromDB(store, cached.getBaseSha());
+                    if (fromDb != null) { descriptorCache.put(fromDb); }
+                    return Optional.ofNullable(fromDb);
+                })
+                .ifPresent(pr::setBase);
+        }
+        if (cached.getHeadSha() != null) {
+            descriptorCache.getCommit(cached.getHeadSha())
+                .or(() -> {
+                    GitCommitDescriptor fromDb = getCommitDescriptorFromDB(store, cached.getHeadSha());
+                    if (fromDb != null) { descriptorCache.put(fromDb); }
+                    return Optional.ofNullable(fromDb);
+                })
+                .ifPresent(pr::setHead);
+        }
+
+        // Add PR commits to descriptor cache
+        if (cached.getCommitShas() != null) {
+            for (String sha : cached.getCommitShas()) {
+                findOrCreateCommitFromCacheBySha(sha);
+            }
+        }
+
+        descriptorCache.put(pr);
+        return pr;
+    }
+
+    /**
+     * Create or retrieve a milestone descriptor from a cached DTO.
+     */
+    public GitHubMilestone findOrCreateMilestoneFromCache(CachedMilestone cached) {
+        Optional<GitHubMilestone> existing = descriptorCache.getMilestone(cached.getNumber());
+        if (existing.isPresent()) {
+            return existing.get();
+        }
+        log.debug("Creating milestone #{} from file cache", cached.getNumber());
+        GitHubMilestone milestone = store.create(GitHubMilestone.class);
+        milestone.setNumber(cached.getNumber());
+        milestone.setTitle(cached.getTitle());
+        milestone.setDescription(cached.getDescription());
+        milestone.setState(cached.getState());
+
+        if (cached.getCreatedAt() != null) {
+            milestone.setCreatedAt(ZonedDateTime.parse(cached.getCreatedAt()));
+        }
+        if (cached.getUpdatedAt() != null) {
+            milestone.setUpdatedAt(ZonedDateTime.parse(cached.getUpdatedAt()));
+        }
+        if (cached.getDueOn() != null) {
+            milestone.setDueOn(ZonedDateTime.parse(cached.getDueOn()));
+        }
+        if (cached.getCreatorLogin() != null) {
+            resolveUserFromCache(cached.getCreatorLogin(), null, null)
+                .ifPresent(milestone::setCreatedBy);
+        }
+
+        descriptorCache.put(milestone);
+        return milestone;
+    }
+
+    /**
+     * Populate common issue fields from a cached DTO onto a descriptor.
+     */
+    private void populateIssueFromCache(GitHubIssue issue, CachedIssue cached) {
+        issue.setNumber(cached.getNumber());
+        issue.setTitle(cached.getTitle());
+        issue.setBody(cached.getBody());
+        issue.setState(cached.getState());
+        issue.setLocked(cached.isLocked());
+
+        if (cached.getCreatedAt() != null) {
+            issue.setCreatedAt(ZonedDateTime.parse(cached.getCreatedAt()));
+        }
+        if (cached.getUpdatedAt() != null) {
+            issue.setUpdatedAt(ZonedDateTime.parse(cached.getUpdatedAt()));
+        }
+        if (cached.getClosedAt() != null) {
+            issue.setClosedAt(ZonedDateTime.parse(cached.getClosedAt()));
+        }
+        if (cached.getCreatedByLogin() != null) {
+            resolveUserFromCache(cached.getCreatedByLogin(), null, null)
+                .ifPresent(issue::setCreatedBy);
+        }
+        if (cached.getClosedByLogin() != null) {
+            resolveUserFromCache(cached.getClosedByLogin(), null, null)
+                .ifPresent(issue::setClosedBy);
+        }
+        if (cached.getAssigneeLogins() != null) {
+            for (String login : cached.getAssigneeLogins()) {
+                resolveUserFromCache(login, null, null)
+                    .ifPresent(user -> issue.getAssignees().add(user));
+            }
+        }
+        if (cached.getLabelNames() != null) {
+            for (String labelName : cached.getLabelNames()) {
+                descriptorCache.getLabel(labelName)
+                    .ifPresent(label -> issue.getLabels().add(label));
+            }
+        }
+        if (cached.getMilestoneNumber() != null) {
+            descriptorCache.getMilestone(cached.getMilestoneNumber())
+                .ifPresent(issue::setMilestone);
+        }
+    }
+
+    /**
+     * Find or create a commit descriptor by SHA, checking descriptor cache and DB.
+     */
+    private GitCommitDescriptor findOrCreateCommitFromCacheBySha(String sha) {
+        Optional<GitCommitDescriptor> existing = descriptorCache.getCommit(sha);
+        if (existing.isPresent()) {
+            return existing.get();
+        }
+        GitCommitDescriptor fromDb = getCommitDescriptorFromDB(store, sha);
+        if (fromDb != null) {
+            descriptorCache.put(fromDb);
+            return fromDb;
+        }
+        // Create a minimal commit descriptor if not found
+        log.debug("Creating minimal commit '{}' from SHA reference", sha);
+        GitCommitDescriptor commit = store.create(GitCommitDescriptor.class);
+        commit.setSha(sha);
+        descriptorCache.put(commit);
+        return commit;
     }
 }
