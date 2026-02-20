@@ -9,5 +9,7 @@ dependency-reduced-pom.xml
 # jQAssistant execution:
 run/
 test-project/
-/jqassistant/
+/jqassistant*/store
 
+# Ignore (local) caches:
+.github-*/

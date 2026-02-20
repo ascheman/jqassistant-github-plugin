@@ -108,6 +108,13 @@
             <artifactId>jackson-databind</artifactId>
         </dependency>
 
+        <!-- OkHttp for HTTP-level ETag caching (optional in github-api) -->
+        <dependency>
+            <groupId>com.squareup.okhttp3</groupId>
+            <artifactId>okhttp</artifactId>
+            <version>4.12.0</version>
+        </dependency>
+
         <!-- Test dependencies -->
         <dependency>
             <groupId>com.buschmais.xo</groupId>
